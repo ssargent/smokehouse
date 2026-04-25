@@ -1,0 +1,41 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/bbq-analytics",
+    "crates/bbq-api",
+    "crates/bbq-auth",
+    "crates/bbq-config",
+    "crates/bbq-core",
+    "crates/bbq-db",
+    "crates/bbq-events",
+    "crates/bbq-observability",
+    "crates/bbq-pi-agent",
+    "crates/bbq-pi-client",
+    "crates/bbq-protocol",
+    "crates/bbq-server",
+    "crates/bbq-telemetry",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+license = "BSD 3-Clause License"
+repository = "https://github.com/ssargent/smokehouse"
+authors = ["Scott Sargent"]
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+dbg_macro = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+
+[workspace.dependencies]
+# Add shared dependency versions here as crates are created.
