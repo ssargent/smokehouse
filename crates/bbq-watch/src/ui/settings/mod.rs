@@ -7,6 +7,7 @@ mod view;
 
 #[cfg(test)]
 pub(crate) use form::field_labels;
+pub(crate) use input::footer_hint;
 pub(crate) use input::handle_key;
 pub(crate) use view::draw;
 

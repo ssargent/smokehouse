@@ -110,6 +110,39 @@ fn handle_toggle(app: &mut App) {
     }
 }
 
+/// A one-line hint for the currently-focused settings element.
+#[must_use]
+pub(crate) fn footer_hint(app: &App) -> &'static str {
+    if app.settings_ui.edit_error.is_some() {
+        return "Enter retry · Esc cancel";
+    }
+    if app.settings_ui.editing {
+        return "Enter save · Esc cancel · ←/→ Home/End move · Del delete";
+    }
+    if app.settings_ui.picker.is_some() {
+        return "↑/↓ choose · Enter select · Esc cancel";
+    }
+    if app.settings_ui.probe_form.is_some() || app.settings_ui.preset_form.is_some() {
+        return "↑/↓ field · ←/→ change · Shift ±5 · Enter edit/choose · Esc back";
+    }
+    match app.settings_ui.section {
+        0 => "↑/↓ probe · Enter edit probe",
+        1 => "↑/↓ preset · Enter edit · last row adds a preset",
+        section => {
+            let list = fields(section);
+            match list.get(app.settings_ui.field).map(|field| &field.kind) {
+                Some(Kind::Toggle) => "Space toggle",
+                Some(Kind::Spinner { .. }) => "←/→ change · Shift ±5",
+                Some(Kind::Segmented { .. }) => "←/→ choose",
+                Some(Kind::Text | Kind::Time) => "Enter edit",
+                Some(Kind::Voice | Kind::AudioDevice) => "Enter choose",
+                Some(Kind::Button(_)) => "Enter run",
+                None => "",
+            }
+        }
+    }
+}
+
 fn activate(app: &mut App) {
     match app.settings_ui.section {
         0 => {

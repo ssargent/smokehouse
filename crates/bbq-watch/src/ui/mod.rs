@@ -319,7 +319,14 @@ fn footer_hints(app: &App) -> Vec<Span<'static>> {
             spans
         }
         Tab::Log => hint("↑/↓", "scroll"),
-        Tab::Settings => hint("Tab", "section"),
+        Tab::Settings => {
+            let mut spans = hint("Tab", "section");
+            spans.push(Span::styled(
+                format!(" {}  ", settings::footer_hint(app)),
+                Style::default().fg(theme::MUTED),
+            ));
+            spans
+        }
     };
     spans.extend(hint("q", "quit"));
     spans.extend(hint("?", "help"));
