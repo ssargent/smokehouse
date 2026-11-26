@@ -104,3 +104,55 @@ impl Clock for AppClock {
         self.start_wall + ChronoDuration::milliseconds(millis)
     }
 }
+
+/// A clock frozen at a fixed instant, advanced explicitly by tests.
+#[derive(Clone, Copy, Debug)]
+pub struct FixedClock {
+    now: AppInstant,
+    start_wall: DateTime<Local>,
+}
+
+impl FixedClock {
+    /// A clock starting at zero simulated seconds on `start_wall`.
+    #[must_use]
+    pub fn new(start_wall: DateTime<Local>) -> Self {
+        Self {
+            now: AppInstant::ZERO,
+            start_wall,
+        }
+    }
+
+    /// Advance the clock by `seconds`.
+    pub fn advance(&mut self, seconds: f64) {
+        self.now = AppInstant::from_secs_f64(self.now.secs() + seconds);
+    }
+}
+
+impl Clock for FixedClock {
+    fn now(&self) -> AppInstant {
+        self.now
+    }
+
+    fn wall(&self, t: AppInstant) -> DateTime<Local> {
+        let millis = (t.secs() * 1000.0) as i64;
+        self.start_wall + ChronoDuration::milliseconds(millis)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone as _;
+
+    #[test]
+    fn fixed_clock_maps_instants_to_wall_time() {
+        let start = Local.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
+        let mut clock = FixedClock::new(start);
+        assert_eq!(clock.now(), AppInstant::ZERO);
+        assert_eq!(clock.wall(AppInstant::ZERO), start);
+        clock.advance(90.0);
+        assert_eq!(clock.now(), AppInstant::from_secs_f64(90.0));
+        assert_eq!(clock.wall(clock.now()).format("%H:%M").to_string(), "12:01");
+    }
+}

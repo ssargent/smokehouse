@@ -57,7 +57,13 @@ pub struct Notifier {
 impl Notifier {
     /// Deliver an alert.
     pub fn deliver(&self, delivery: Delivery) {
-        let _ = self.tx.try_send(NotifyMsg::Delivery(Box::new(delivery)));
+        if self
+            .tx
+            .try_send(NotifyMsg::Delivery(Box::new(delivery)))
+            .is_err()
+        {
+            tracing::warn!("notifier channel full; dropped an alert");
+        }
     }
 
     /// Replace the settings the notifier uses.
