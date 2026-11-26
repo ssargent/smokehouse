@@ -10,6 +10,8 @@ use futures::StreamExt as _;
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent, KeyEventKind};
 use std::sync::Mutex;
+
+mod lifecycle;
 use tokio::sync::mpsc;
 
 use crate::alerts::{
@@ -397,30 +399,6 @@ impl App {
         }
         Ok(())
     }
-
-    /// Write the terminal bell if one is pending and enabled.
-    fn emit_bell(&mut self) {
-        if !self.bell_pending {
-            return;
-        }
-        self.bell_pending = false;
-        if self.settings.alarms.bell {
-            let _ = ratatui::crossterm::execute!(
-                std::io::stdout(),
-                ratatui::crossterm::style::Print("\u{7}")
-            );
-        }
-    }
-
-    async fn cleanup(&mut self) {
-        self.logger.flush();
-        self.flush_settings(true);
-        self.caffeinate.stop();
-        let _ = self.device_tx.send(DeviceCommand::Shutdown).await;
-        self.notifier.shutdown();
-    }
-
-    // ---- device -----------------------------------------------------------
 
     // ---- tick -------------------------------------------------------------
 
