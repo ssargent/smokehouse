@@ -448,7 +448,7 @@ impl App {
                     Priority::Urgent => EventIcon::Urgent,
                     Priority::Normal => EventIcon::Warning,
                 };
-                new_events.push((icon, alert_message(&delivery.key, &snapshot)));
+                new_events.push((icon, crate::alerts::short_text(&delivery.key, &snapshot)));
             }
             if self.settings.alarms.bell {
                 self.bell_pending = true;
@@ -478,25 +478,6 @@ impl App {
 
 fn kind_label(kind: AlertKind) -> &'static str {
     kind.label()
-}
-
-fn alert_message(key: &AlertKey, snapshot: &Snapshot) -> String {
-    let probe = key
-        .probe
-        .and_then(|id| snapshot.probes.iter().find(|probe| probe.id == id));
-    let label = probe.map_or_else(String::new, |probe| probe.label.clone());
-    match key.kind {
-        AlertKind::TargetReached => format!("{label} reached target"),
-        AlertKind::PreAlert => format!("{label} approaching target"),
-        AlertKind::AboveHigh => format!("{label} above high"),
-        AlertKind::BelowLow => format!("{label} below low"),
-        AlertKind::ProbeUnplugged => format!("{label} unplugged"),
-        AlertKind::BluetoothLost => String::from("Bluetooth lost"),
-        AlertKind::StallStarted => format!("{label} stalled"),
-        AlertKind::StallEnded => format!("{label} stall ended"),
-        AlertKind::BatteryLow => String::from("Battery low"),
-        AlertKind::ServeLate => String::from("Serve time is late"),
-    }
 }
 
 /// The next local `hour:minute` at or after `start`, rolling past a day if that

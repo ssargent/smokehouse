@@ -123,20 +123,6 @@ pub enum Priority {
     Normal,
 }
 
-/// Stable inputs used to phrase an alert; the numbers are read live at speak
-/// time.
-#[derive(Clone, Debug, Default)]
-pub struct TextInput {
-    /// Probe label at fire time.
-    pub label: String,
-    /// Target temperature in °C.
-    pub target_c: Option<f32>,
-    /// Low threshold in °C.
-    pub low_c: Option<f32>,
-    /// High threshold in °C.
-    pub high_c: Option<f32>,
-}
-
 /// One alert activation to deliver.
 #[derive(Clone, Debug)]
 pub struct Delivery {
@@ -144,8 +130,6 @@ pub struct Delivery {
     pub key: AlertKey,
     /// Delivery priority.
     pub priority: Priority,
-    /// Stable inputs for phrasing the alert.
-    pub text_builder_input: TextInput,
 }
 
 /// What one evaluation produced: alerts to deliver and alerts that cleared.
@@ -561,42 +545,11 @@ fn pre_alert_state(
     }
 }
 
-fn make_delivery(key: AlertKey, _now: AppInstant, snapshot: &Snapshot) -> Delivery {
-    let input = key
-        .probe
-        .and_then(|id| snapshot.probes.iter().find(|probe| probe.id == id))
-        .map_or_else(TextInput::default, |probe| TextInput {
-            label: probe.label.clone(),
-            target_c: probe.target_c,
-            low_c: probe.alert_low_c.or_else(|| probe.range_c.map(|r| r[0])),
-            high_c: probe.alert_high_c.or_else(|| probe.range_c.map(|r| r[1])),
-        });
+fn make_delivery(key: AlertKey, _now: AppInstant, _snapshot: &Snapshot) -> Delivery {
     Delivery {
         key,
         priority: key.kind.priority(),
-        text_builder_input: input,
     }
-}
-
-/// A probe's live info as shared with the speech worker and Alarms tab.
-#[derive(Clone, Debug)]
-pub struct ProbeSpeech {
-    /// Probe id.
-    pub id: ProbeId,
-    /// Current label.
-    pub label: String,
-    /// Current temperature in °C.
-    pub temp_c: Option<f32>,
-    /// Target temperature in °C.
-    pub target_c: Option<f32>,
-    /// Low threshold in °C.
-    pub low_c: Option<f32>,
-    /// High threshold in °C.
-    pub high_c: Option<f32>,
-    /// Whether the probe is stalled.
-    pub stalled: bool,
-    /// Whether this is the pit probe.
-    pub is_pit: bool,
 }
 
 /// Snapshot of one active alert, as seen outside the engine.
@@ -619,7 +572,7 @@ pub struct ActiveInfo {
 #[derive(Debug, Default)]
 pub struct ActiveAlerts {
     entries: HashMap<AlertKey, ActiveInfo>,
-    probes: Vec<ProbeSpeech>,
+    snapshot: Snapshot,
     unit: Unit,
     battery: Option<u8>,
     serve_at: Option<String>,
@@ -639,20 +592,7 @@ impl ActiveAlerts {
         self.unit = unit;
         self.battery = battery;
         self.serve_at = serve_at;
-        self.probes = snapshot
-            .probes
-            .iter()
-            .map(|probe| ProbeSpeech {
-                id: probe.id,
-                label: probe.label.clone(),
-                temp_c: probe.temp_c,
-                target_c: probe.target_c,
-                low_c: probe.alert_low_c.or_else(|| probe.range_c.map(|r| r[0])),
-                high_c: probe.alert_high_c.or_else(|| probe.range_c.map(|r| r[1])),
-                stalled: probe.stalled,
-                is_pit: probe.is_pit,
-            })
-            .collect();
+        self.snapshot = snapshot.clone();
 
         let snooze = engine.snooze_until().filter(|until| now < *until);
         let mut entries = HashMap::new();
@@ -693,8 +633,8 @@ impl ActiveAlerts {
 
     /// Live probe info.
     #[must_use]
-    pub fn probes(&self) -> &[ProbeSpeech] {
-        &self.probes
+    pub fn probes(&self) -> &[ProbeSnapshot] {
+        &self.snapshot.probes
     }
 
     /// Build the spoken phrase for an alert from current numbers.
@@ -703,7 +643,7 @@ impl ActiveAlerts {
         let kind = key.kind;
         let probe = key
             .probe
-            .and_then(|id| self.probes.iter().find(|p| p.id == id));
+            .and_then(|id| self.snapshot.probes.iter().find(|p| p.id == id));
         let label = probe.map_or_else(String::new, |p| p.label.clone());
         let temp = probe.and_then(|p| p.temp_c).map(|c| self.unit.from_c(c));
         let degrees = |value: f32| format!("{} degrees", value.round());
@@ -763,7 +703,7 @@ impl ActiveAlerts {
     pub fn build_status(&self) -> String {
         let mut parts = Vec::new();
         let mut pit = None;
-        for probe in &self.probes {
+        for probe in &self.snapshot.probes {
             if let Some(temp) = probe.temp_c {
                 let value = self.unit.from_c(temp).round();
                 if probe.is_pit {
@@ -787,6 +727,27 @@ impl ActiveAlerts {
             text.push('.');
             text
         }
+    }
+}
+
+/// A short, log-style phrase for an alert (distinct from the spoken text).
+#[must_use]
+pub fn short_text(key: &AlertKey, snapshot: &Snapshot) -> String {
+    let probe = key
+        .probe
+        .and_then(|id| snapshot.probes.iter().find(|probe| probe.id == id));
+    let label = probe.map_or_else(String::new, |probe| probe.label.clone());
+    match key.kind {
+        AlertKind::TargetReached => format!("{label} reached target"),
+        AlertKind::PreAlert => format!("{label} approaching target"),
+        AlertKind::AboveHigh => format!("{label} above high"),
+        AlertKind::BelowLow => format!("{label} below low"),
+        AlertKind::ProbeUnplugged => format!("{label} unplugged"),
+        AlertKind::BluetoothLost => String::from("Bluetooth lost"),
+        AlertKind::StallStarted => format!("{label} stalled"),
+        AlertKind::StallEnded => format!("{label} stall ended"),
+        AlertKind::BatteryLow => String::from("Battery low"),
+        AlertKind::ServeLate => String::from("Serve time is late"),
     }
 }
 
