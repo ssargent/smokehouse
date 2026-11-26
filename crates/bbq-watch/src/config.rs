@@ -25,7 +25,6 @@ pub enum ConfigError {
 
 /// Which portion of the cook history the chart shows.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
 pub enum ChartWindow {
     /// The whole cook so far.
     #[default]
@@ -147,27 +146,21 @@ pub fn custom_preset() -> &'static Preset {
 /// Presets live in the config file (`[[presets]]`), so they can be edited and
 /// extended from the Settings tab.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Preset {
     /// Stable key referenced by `[[probes]] preset`.
-    #[serde(default)]
     pub id: String,
     /// Menu label.
-    #[serde(default)]
     pub name: String,
     /// Target temperature in °F (`None` = leave the target untouched).
-    #[serde(default)]
     pub target_f: Option<f32>,
     /// Pit / ambient preset: apply the range and alert bounds below instead.
-    #[serde(default)]
     pub pit: bool,
     /// Pit range in °F, `[low, high]`.
-    #[serde(default)]
     pub range_f: Option<[f32; 2]>,
     /// Pit low-alert threshold in °F.
-    #[serde(default)]
     pub alert_low_f: Option<f32>,
     /// Pit high-alert threshold in °F.
-    #[serde(default)]
     pub alert_high_f: Option<f32>,
 }
 
@@ -246,33 +239,25 @@ fn default_presets() -> Vec<Preset> {
 
 /// One probe's settings.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ProbeConfig {
     /// Display label (max 18 characters in the editor).
-    #[serde(default)]
     pub label: String,
     /// Cook preset id, resolved against [`Settings::presets`].
-    #[serde(default = "default_preset_id")]
     pub preset: String,
     /// Target temperature in °C (`None` for the pit preset).
-    #[serde(default)]
     pub target_c: Option<f32>,
     /// Pit range `[min, max]` in °C (pit only).
-    #[serde(default)]
     pub range_c: Option<[f32; 2]>,
     /// Low alarm threshold in °C.
-    #[serde(default)]
     pub alert_low_c: Option<f32>,
     /// High alarm threshold in °C.
-    #[serde(default)]
     pub alert_high_c: Option<f32>,
     /// Pre-alert distance below target in °C.
-    #[serde(default)]
     pub pre_alert_c: Option<f32>,
     /// Chart and card colour.
-    #[serde(default)]
     pub color: ProbeColor,
     /// Whether the probe is drawn on the chart.
-    #[serde(default = "default_true")]
     pub show_on_chart: bool,
 }
 
@@ -280,7 +265,7 @@ impl Default for ProbeConfig {
     fn default() -> Self {
         Self {
             label: String::from("Probe"),
-            preset: default_preset_id(),
+            preset: String::from("custom"),
             target_c: None,
             range_c: None,
             alert_low_c: None,
@@ -294,33 +279,25 @@ impl Default for ProbeConfig {
 
 /// `[display]` section.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DisplaySettings {
     /// Display unit.
-    #[serde(default)]
     pub units: Unit,
     /// Chart window.
-    #[serde(default)]
     pub chart_window: ChartWindow,
     /// Table row interval in minutes (1, 5 or 15).
-    #[serde(default = "default_table_interval")]
     pub table_interval_min: u32,
     /// Redraw interval in milliseconds.
-    #[serde(default = "default_refresh_ms")]
     pub refresh_ms: u64,
     /// Colour theme name.
-    #[serde(default = "default_theme")]
     pub theme: String,
     /// Draw meat target lines on the chart.
-    #[serde(default = "default_true")]
     pub show_target_lines: bool,
     /// Draw pit range lines on the chart.
-    #[serde(default = "default_true")]
     pub show_pit_range_lines: bool,
     /// 24-hour clock.
-    #[serde(default = "default_true")]
     pub clock_24h: bool,
     /// Compact probe cards.
-    #[serde(default)]
     pub compact_cards: bool,
 }
 
@@ -329,9 +306,9 @@ impl Default for DisplaySettings {
         Self {
             units: Unit::Fahrenheit,
             chart_window: ChartWindow::Whole,
-            table_interval_min: default_table_interval(),
-            refresh_ms: default_refresh_ms(),
-            theme: default_theme(),
+            table_interval_min: 5,
+            refresh_ms: 1000,
+            theme: String::from("tokyo-night"),
             show_target_lines: true,
             show_pit_range_lines: true,
             clock_24h: true,
@@ -342,39 +319,29 @@ impl Default for DisplaySettings {
 
 /// `[alarms]` section.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AlarmSettings {
     /// Play a sound on delivery.
-    #[serde(default = "default_true")]
     pub sound: bool,
     /// Sound file name in `/System/Library/Sounds`.
-    #[serde(default = "default_sound_file")]
     pub sound_file: String,
     /// Show a macOS banner.
-    #[serde(default = "default_true")]
     pub banner: bool,
     /// Push to ntfy.
-    #[serde(default)]
     pub ntfy: bool,
     /// ntfy topic.
-    #[serde(default)]
     pub ntfy_topic: String,
     /// Terminal bell.
-    #[serde(default)]
     pub bell: bool,
     /// Seconds before the first repeat.
-    #[serde(default = "default_repeat_s")]
     pub repeat_s: u32,
     /// Snooze length in minutes.
-    #[serde(default = "default_snooze_min")]
     pub snooze_min: u32,
     /// Seconds a probe must be unplugged before alerting.
-    #[serde(default = "default_unplugged_after_s")]
     pub unplugged_after_s: u32,
     /// Minutes without readings before a Bluetooth-lost alert.
-    #[serde(default = "default_bt_lost_after_min")]
     pub bt_lost_after_min: u32,
     /// Alert on stall start and end.
-    #[serde(default = "default_true")]
     pub alert_on_stall: bool,
 }
 
@@ -382,15 +349,15 @@ impl Default for AlarmSettings {
     fn default() -> Self {
         Self {
             sound: true,
-            sound_file: default_sound_file(),
+            sound_file: String::from("Glass.aiff"),
             banner: true,
             ntfy: false,
             ntfy_topic: String::new(),
             bell: false,
-            repeat_s: default_repeat_s(),
-            snooze_min: default_snooze_min(),
-            unplugged_after_s: default_unplugged_after_s(),
-            bt_lost_after_min: default_bt_lost_after_min(),
+            repeat_s: 90,
+            snooze_min: 10,
+            unplugged_after_s: 30,
+            bt_lost_after_min: 2,
             alert_on_stall: true,
         }
     }
@@ -398,27 +365,21 @@ impl Default for AlarmSettings {
 
 /// `[speech]` section.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SpeechSettings {
     /// Whether spoken alerts are enabled.
-    #[serde(default = "default_true")]
     pub enabled: bool,
     /// `say` voice name (empty = system default).
-    #[serde(default)]
     pub voice: String,
     /// Speaking rate in words per minute.
-    #[serde(default = "default_rate_wpm")]
     pub rate_wpm: u32,
     /// `say` audio device (empty = default output).
-    #[serde(default)]
     pub audio_device: String,
     /// Speak only urgent alerts.
-    #[serde(default)]
     pub urgent_only: bool,
     /// Quiet-hours window, e.g. `23:00-07:00` (empty = off).
-    #[serde(default)]
     pub quiet_hours: String,
     /// Speak a status summary every N minutes (0 = off).
-    #[serde(default)]
     pub status_every_min: u32,
 }
 
@@ -427,7 +388,7 @@ impl Default for SpeechSettings {
         Self {
             enabled: true,
             voice: String::new(),
-            rate_wpm: default_rate_wpm(),
+            rate_wpm: 180,
             audio_device: String::new(),
             urgent_only: false,
             quiet_hours: String::new(),
@@ -438,36 +399,27 @@ impl Default for SpeechSettings {
 
 /// `[cook]` section.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CookSettings {
     /// ETA method.
-    #[serde(default)]
     pub eta_method: EtaMethod,
     /// Regression window in minutes.
-    #[serde(default = "default_rate_window_min")]
     pub rate_window_min: f64,
     /// Stall rate threshold in °F/h.
-    #[serde(default = "default_stall_rate")]
     pub stall_rate_f_per_h: f32,
     /// Minutes below the stall rate before a stall is declared.
-    #[serde(default = "default_stall_minutes")]
     pub stall_minutes: f64,
     /// Stall lower bound in °C.
-    #[serde(default = "default_stall_min_c")]
     pub stall_min_c: f32,
     /// Stall upper bound in °C.
-    #[serde(default = "default_stall_max_c")]
     pub stall_max_c: f32,
     /// Rest time in minutes.
-    #[serde(default = "default_rest_min")]
     pub rest_min: f64,
     /// Target serve time, `HH:MM` (empty = off).
-    #[serde(default)]
     pub want_to_eat_at: String,
     /// Wrapping resets the expected remaining stall.
-    #[serde(default = "default_true")]
     pub wrapped_resets_stall: bool,
     /// Freeze ETAs while the lid is open.
-    #[serde(default)]
     pub pause_eta_on_lid_open: bool,
 }
 
@@ -475,12 +427,12 @@ impl Default for CookSettings {
     fn default() -> Self {
         Self {
             eta_method: EtaMethod::StallAware,
-            rate_window_min: default_rate_window_min(),
-            stall_rate_f_per_h: default_stall_rate(),
-            stall_minutes: default_stall_minutes(),
-            stall_min_c: default_stall_min_c(),
-            stall_max_c: default_stall_max_c(),
-            rest_min: default_rest_min(),
+            rate_window_min: 30.0,
+            stall_rate_f_per_h: 3.0,
+            stall_minutes: 20.0,
+            stall_min_c: fahrenheit_to_celsius(145.0),
+            stall_max_c: fahrenheit_to_celsius(175.0),
+            rest_min: 60.0,
             want_to_eat_at: String::new(),
             wrapped_resets_stall: true,
             pause_eta_on_lid_open: false,
@@ -490,21 +442,17 @@ impl Default for CookSettings {
 
 /// `[device]` section.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DeviceSettings {
     /// Saved CoreBluetooth peripheral UUID.
-    #[serde(default)]
     pub peripheral_id: String,
     /// User rename, shown instead of the advertised name.
-    #[serde(default)]
     pub display_name: String,
     /// Reconnect automatically after a drop.
-    #[serde(default = "default_true")]
     pub auto_reconnect: bool,
     /// Battery poll interval in minutes.
-    #[serde(default = "default_battery_check_min")]
     pub battery_check_min: u32,
     /// Units shown on the thermometer's own screen.
-    #[serde(default)]
     pub device_screen_units: DeviceScreenUnits,
 }
 
@@ -514,7 +462,7 @@ impl Default for DeviceSettings {
             peripheral_id: String::new(),
             display_name: String::new(),
             auto_reconnect: true,
-            battery_check_min: default_battery_check_min(),
+            battery_check_min: 5,
             device_screen_units: DeviceScreenUnits::Match,
         }
     }
@@ -522,18 +470,15 @@ impl Default for DeviceSettings {
 
 /// `[data]` section.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DataSettings {
     /// Write readings to CSV.
-    #[serde(default = "default_true")]
     pub csv_enabled: bool,
     /// CSV directory (empty = `~/bbq-watch`).
-    #[serde(default)]
     pub csv_dir: String,
     /// Sampling interval in seconds (1, 10 or 60).
-    #[serde(default = "default_sample_interval")]
     pub sample_interval_s: u32,
     /// Keep the Mac awake while running.
-    #[serde(default = "default_true")]
     pub keep_awake: bool,
 }
 
@@ -542,7 +487,7 @@ impl Default for DataSettings {
         Self {
             csv_enabled: true,
             csv_dir: String::new(),
-            sample_interval_s: default_sample_interval(),
+            sample_interval_s: 10,
             keep_awake: true,
         }
     }
@@ -550,30 +495,23 @@ impl Default for DataSettings {
 
 /// The full application settings.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
     /// Display section.
-    #[serde(default)]
     pub display: DisplaySettings,
     /// The four probe definitions.
-    #[serde(default = "default_probes")]
     pub probes: Vec<ProbeConfig>,
     /// Cook presets, editable from the Settings tab.
-    #[serde(default = "default_presets")]
     pub presets: Vec<Preset>,
     /// Alarms section.
-    #[serde(default)]
     pub alarms: AlarmSettings,
     /// Speech section.
-    #[serde(default)]
     pub speech: SpeechSettings,
     /// Cook section.
-    #[serde(default)]
     pub cook: CookSettings,
     /// Device section.
-    #[serde(default)]
     pub device: DeviceSettings,
     /// Data section.
-    #[serde(default)]
     pub data: DataSettings,
 }
 
@@ -724,10 +662,6 @@ impl Settings {
     }
 }
 
-fn default_true() -> bool {
-    true
-}
-
 fn default_probes() -> Vec<ProbeConfig> {
     (0..PROBE_COUNT).map(default_probe).collect()
 }
@@ -764,78 +698,6 @@ fn default_probe(index: usize) -> ProbeConfig {
 }
 
 /// Preset id a probe starts with when the config omits one.
-fn default_preset_id() -> String {
-    String::from("custom")
-}
-
-fn default_theme() -> String {
-    String::from("tokyo-night")
-}
-
-const fn default_table_interval() -> u32 {
-    5
-}
-
-const fn default_refresh_ms() -> u64 {
-    1000
-}
-
-fn default_sound_file() -> String {
-    String::from("Glass.aiff")
-}
-
-const fn default_repeat_s() -> u32 {
-    90
-}
-
-const fn default_snooze_min() -> u32 {
-    10
-}
-
-const fn default_unplugged_after_s() -> u32 {
-    30
-}
-
-const fn default_bt_lost_after_min() -> u32 {
-    2
-}
-
-const fn default_rate_wpm() -> u32 {
-    180
-}
-
-const fn default_rate_window_min() -> f64 {
-    30.0
-}
-
-const fn default_stall_rate() -> f32 {
-    3.0
-}
-
-const fn default_stall_minutes() -> f64 {
-    20.0
-}
-
-fn default_stall_min_c() -> f32 {
-    fahrenheit_to_celsius(145.0)
-}
-
-fn default_stall_max_c() -> f32 {
-    fahrenheit_to_celsius(175.0)
-}
-
-const fn default_rest_min() -> f64 {
-    60.0
-}
-
-const fn default_battery_check_min() -> u32 {
-    5
-}
-
-const fn default_sample_interval() -> u32 {
-    10
-}
-
 /// Platform config directory for `bbq-watch`.
 pub fn project_dirs() -> Result<directories::ProjectDirs, ConfigError> {
     directories::ProjectDirs::from("", "", "bbq-watch").ok_or(ConfigError::NoDir)
