@@ -1171,4 +1171,16 @@ mod tests {
         assert!(text.contains("Pork Shoulder"), "config not saved:\n{text}");
         cleanup(&path);
     }
+
+    #[tokio::test]
+    async fn space_in_preset_list_does_not_toggle_pit() {
+        let (mut app, path) = harness().await;
+        press(&mut app, KeyCode::Char('5')).await;
+        press(&mut app, KeyCode::Char('p')).await;
+        assert!(app.settings_ui.preset_popup);
+        press(&mut app, KeyCode::Char(' ')).await;
+        assert!(!app.settings.presets[0].pit);
+        assert!(!app.settings.is_pit(0));
+        cleanup(&path);
+    }
 }

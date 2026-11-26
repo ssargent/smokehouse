@@ -1390,7 +1390,6 @@ fn handle_preset_list(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char('n') => new_preset(app),
         KeyCode::Char('d') => delete_preset(app),
-        KeyCode::Char(' ') => toggle_preset_pit(app),
         _ => {}
     }
 }
