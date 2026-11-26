@@ -142,7 +142,6 @@ pub struct App {
     pub(crate) rssi: Option<i16>,
     pub(crate) battery: Option<u8>,
     pub(crate) last_reading_at: Option<AppInstant>,
-    pub(crate) demo_unplugged: [bool; PROBE_COUNT],
 
     pub(crate) probes: [ProbeState; PROBE_COUNT],
 
@@ -232,7 +231,6 @@ async fn build(
         rssi: None,
         battery: None,
         last_reading_at: None,
-        demo_unplugged: [false; PROBE_COUNT],
         probes: std::array::from_fn(|_| ProbeState::default()),
         engine,
         shared,

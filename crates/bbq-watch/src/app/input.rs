@@ -104,14 +104,11 @@ impl App {
             KeyCode::Char('$') => 3,
             _ => return,
         };
-        self.demo_unplugged[slot] = !self.demo_unplugged[slot];
-        let state = if self.demo_unplugged[slot] {
-            "unplugged"
-        } else {
-            "plugged back in"
-        };
+        let _ = self
+            .device_tx
+            .try_send(DeviceCommand::DemoTogglePlug(ProbeId::from_index(slot)));
         let label = self.probe_label(slot);
-        self.log_event(EventIcon::Info, format!("{label} {state}"));
+        self.log_event(EventIcon::Info, format!("{label} plug toggled"));
     }
 
     fn handle_dashboard_key(&mut self, key: KeyEvent) {

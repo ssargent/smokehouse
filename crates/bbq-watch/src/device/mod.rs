@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 
 use crate::clock::{AppClock, AppInstant};
 use crate::config::Settings;
+use crate::model::ProbeId;
 use crate::model::{PROBE_COUNT, Unit};
 
 /// Failures raised inside the device task.
@@ -64,6 +65,8 @@ pub enum DeviceCommand {
     Rescan,
     /// Clear the saved peripheral id and scan again.
     Forget,
+    /// Toggle a probe's plug in the demo device.
+    DemoTogglePlug(ProbeId),
     /// Stop the device task.
     Shutdown,
 }

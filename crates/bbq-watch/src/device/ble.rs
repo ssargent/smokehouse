@@ -173,7 +173,7 @@ async fn wait_forever(cmd: &mut mpsc::Receiver<DeviceCommand>, saved_id: &mut St
                 saved_id.clear();
                 return Wait::Abort;
             }
-            Some(DeviceCommand::SetDeviceUnits(_)) => {}
+            Some(DeviceCommand::SetDeviceUnits(_) | DeviceCommand::DemoTogglePlug(_)) => {}
         }
     }
 }
@@ -199,7 +199,7 @@ async fn wait_cmd(
                 saved_id.clear();
                 return Wait::Abort;
             }
-            Ok(Some(DeviceCommand::SetDeviceUnits(_))) => {}
+            Ok(Some(DeviceCommand::SetDeviceUnits(_) | DeviceCommand::DemoTogglePlug(_))) => {}
         }
     }
 }
@@ -248,7 +248,7 @@ async fn scan_for(
                 match incoming {
                     None | Some(DeviceCommand::Shutdown) => break ScanOutcome::Shutdown,
                     Some(DeviceCommand::Forget) => saved_id.clear(),
-                    Some(DeviceCommand::Rescan | DeviceCommand::SetDeviceUnits(_)) => {}
+                    Some(DeviceCommand::Rescan | DeviceCommand::SetDeviceUnits(_) | DeviceCommand::DemoTogglePlug(_)) => {}
                 }
             }
         }
@@ -408,6 +408,7 @@ async fn session(
                     Some(DeviceCommand::SetDeviceUnits(unit)) => {
                         let _ = write_char(peripheral, &settings, ibbq::encode_units(unit)).await;
                     }
+                    Some(DeviceCommand::DemoTogglePlug(_)) => {}
                     Some(DeviceCommand::Rescan) => {
                         let _ = peripheral.disconnect().await;
                         return SessionOutcome::Rescan;

@@ -91,7 +91,7 @@ pub async fn run(
     mut cmd: mpsc::Receiver<DeviceCommand>,
 ) {
     let mut sim = DemoSim::new();
-    let mut connected = true;
+    let mut unplugged = [false; PROBE_COUNT];
 
     if tx
         .send(DeviceEvent::Connected {
@@ -114,7 +114,12 @@ pub async fn run(
         tokio::select! {
             _ = ticker.tick() => {
                 let now = clock.now();
-                let readings = sim.readings(now.minutes());
+                let mut readings = sim.readings(now.minutes());
+                for (slot, plugged) in readings.iter_mut().zip(unplugged) {
+                    if plugged {
+                        *slot = None;
+                    }
+                }
                 if tx.send(DeviceEvent::Readings { at: now, temps_c: readings }).await.is_err() {
                     return;
                 }
@@ -132,29 +137,21 @@ pub async fn run(
                 match incoming {
                     None | Some(DeviceCommand::Shutdown) => return,
                     Some(DeviceCommand::SetDeviceUnits(_)) => {}
-                    Some(DeviceCommand::Rescan) => {
+                    Some(DeviceCommand::DemoTogglePlug(id)) => {
+                        let index = id.index();
+                        if let Some(slot) = unplugged.get_mut(index) {
+                            *slot = !*slot;
+                        }
+                    }
+                    Some(DeviceCommand::Rescan | DeviceCommand::Forget) => {
                         let _ = tx.send(DeviceEvent::Scanning).await;
                         let _ = tx.send(DeviceEvent::Connected {
                             name: String::from("iBBQ-demo"),
                             id: String::from("DEMO"),
                         }).await;
                     }
-                    Some(DeviceCommand::Forget) => {
-                        connected = false;
-                        let _ = tx.send(DeviceEvent::Scanning).await;
-                    }
                 }
             }
-        }
-        if !connected {
-            // A "forgotten" demo device immediately reconnects, like a rescan.
-            connected = true;
-            let _ = tx
-                .send(DeviceEvent::Connected {
-                    name: String::from("iBBQ-demo"),
-                    id: String::from("DEMO"),
-                })
-                .await;
         }
     }
 }

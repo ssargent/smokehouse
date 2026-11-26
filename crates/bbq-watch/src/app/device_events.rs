@@ -33,14 +33,7 @@ impl App {
             DeviceEvent::Readings { at, temps_c } => {
                 self.last_reading_at = Some(at);
                 self.now = at;
-                let mut temps = temps_c;
-                if self.demo {
-                    for (index, unplugged) in self.demo_unplugged.iter().enumerate() {
-                        if *unplugged && let Some(slot) = temps.get_mut(index) {
-                            *slot = None;
-                        }
-                    }
-                }
+                let temps = temps_c;
                 for (index, probe) in self.probes.iter_mut().enumerate() {
                     let temp = temps.get(index).copied().flatten();
                     probe.temp_c = temp;
