@@ -67,7 +67,7 @@ fn alert_row(row: &AlertRow, app: &App) -> Row<'static> {
         Priority::Urgent => (" urgent ", theme::RED),
         Priority::Normal => (" normal ", theme::YELLOW),
     };
-    let probe = row.key.0.map_or_else(
+    let probe = row.key.probe.map_or_else(
         || String::from("—"),
         |id| format!(" {} ", app.probe_label(id.index())),
     );
@@ -86,7 +86,7 @@ fn alert_row(row: &AlertRow, app: &App) -> Row<'static> {
     Row::new(vec![
         Cell::from(priority_text).style(Style::default().fg(priority_color)),
         Cell::from(probe),
-        Cell::from(format!(" {} ", row.key.1.label())),
+        Cell::from(format!(" {} ", row.key.kind.label())),
         Cell::from(since),
         Cell::from(spoken),
         Cell::from(format!(" {status} ")),
@@ -101,7 +101,7 @@ fn draw_cleared(frame: &mut Frame, area: Rect, app: &App) {
         .rev()
         .take(area.height.saturating_sub(2) as usize)
         .map(|(key, at)| {
-            let probe = key.0.map_or_else(String::new, |id| {
+            let probe = key.probe.map_or_else(String::new, |id| {
                 format!("{} ", app.probe_label(id.index()))
             });
             Line::from(Span::styled(
@@ -109,7 +109,7 @@ fn draw_cleared(frame: &mut Frame, area: Rect, app: &App) {
                     " {} {}{} cleared",
                     app.wall(*at).format("%H:%M"),
                     probe,
-                    key.1.label()
+                    key.kind.label()
                 ),
                 Style::default().fg(theme::MUTED),
             ))

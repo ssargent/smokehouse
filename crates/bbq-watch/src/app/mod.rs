@@ -406,11 +406,11 @@ impl App {
         let snapshot = self.snapshot();
         let evaluation = self.engine.evaluate(&snapshot, now);
         for (key, _) in &evaluation.cleared {
-            new_events.push((EventIcon::Info, format!("{} cleared", kind_label(key.1))));
+            new_events.push((EventIcon::Info, format!("{} cleared", kind_label(key.kind))));
         }
         for delivery in evaluation.deliveries {
             if !matches!(
-                delivery.key.1,
+                delivery.key.kind,
                 AlertKind::StallStarted | AlertKind::StallEnded
             ) {
                 let icon = match delivery.priority {
@@ -451,10 +451,10 @@ fn kind_label(kind: AlertKind) -> &'static str {
 
 fn alert_message(key: &AlertKey, snapshot: &Snapshot) -> String {
     let probe = key
-        .0
+        .probe
         .and_then(|id| snapshot.probes.iter().find(|probe| probe.id == id));
     let label = probe.map_or_else(String::new, |probe| probe.label.clone());
-    match key.1 {
+    match key.kind {
         AlertKind::TargetReached => format!("{label} reached target"),
         AlertKind::PreAlert => format!("{label} approaching target"),
         AlertKind::AboveHigh => format!("{label} above high"),

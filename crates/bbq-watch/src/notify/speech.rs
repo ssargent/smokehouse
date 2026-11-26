@@ -620,7 +620,8 @@ mod tests {
     async fn cleared_alert_is_dropped() {
         let shared = Arc::new(Mutex::new(ActiveAlerts::default()));
         let (tx, log, _handle) = spawn_worker(SpeechSettings::default(), false, shared).await;
-        let key = (Some(ProbeId::new(1).unwrap()), AlertKind::TargetReached);
+        let key =
+            crate::alerts::AlertKey::new(Some(ProbeId::new(1).unwrap()), AlertKind::TargetReached);
         tx.send(SpeechMsg::Item(SpeechItem {
             key: SpeechKey::Alert(key),
             priority: Priority::Urgent,
@@ -670,7 +671,10 @@ mod tests {
         let shared = Arc::new(Mutex::new(active));
         let (tx, log, _handle) = spawn_worker(SpeechSettings::default(), false, shared).await;
         tx.send(SpeechMsg::Item(SpeechItem {
-            key: SpeechKey::Alert((Some(id), AlertKind::TargetReached)),
+            key: SpeechKey::Alert(crate::alerts::AlertKey::new(
+                Some(id),
+                AlertKind::TargetReached,
+            )),
             priority: Priority::Urgent,
         }))
         .await

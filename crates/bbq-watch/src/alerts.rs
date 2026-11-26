@@ -98,7 +98,21 @@ impl AlertKind {
 }
 
 /// Alert identity: an optional probe plus the kind.
-pub type AlertKey = (Option<ProbeId>, AlertKind);
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AlertKey {
+    /// The probe the alert is about, if any (None = device-wide).
+    pub probe: Option<ProbeId>,
+    /// The alert kind.
+    pub kind: AlertKind,
+}
+
+impl AlertKey {
+    /// Build a key.
+    #[must_use]
+    pub fn new(probe: Option<ProbeId>, kind: AlertKind) -> Self {
+        Self { probe, kind }
+    }
+}
 
 /// Delivery priority.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -284,7 +298,7 @@ impl AlertEngine {
 
     /// Acknowledge one alert.
     pub fn ack(&mut self, key: AlertKey, snapshot: &Snapshot) {
-        let temp = probe_temp(key.0, snapshot);
+        let temp = probe_temp(key.probe, snapshot);
         if let Some(active) = self.active.get_mut(&key) {
             active.acked = true;
             active.ack_temp_c = temp;
@@ -305,14 +319,14 @@ impl AlertEngine {
             if let Some(target) = probe.target_c {
                 let (fire, clear) = upper(temp, target, margin);
                 conditions.push(Condition {
-                    key: (id, AlertKind::TargetReached),
+                    key: AlertKey::new(id, AlertKind::TargetReached),
                     fire,
                     clear,
                 });
                 let pre = probe.pre_alert_c;
                 let (pre_fire, pre_clear) = pre_alert_state(temp, target, pre, margin);
                 conditions.push(Condition {
-                    key: (id, AlertKind::PreAlert),
+                    key: AlertKey::new(id, AlertKind::PreAlert),
                     fire: pre_fire,
                     clear: pre_clear || fire,
                 });
@@ -324,7 +338,7 @@ impl AlertEngine {
             if let Some(threshold) = high {
                 let (fire, clear) = upper(temp, threshold, margin);
                 conditions.push(Condition {
-                    key: (id, AlertKind::AboveHigh),
+                    key: AlertKey::new(id, AlertKind::AboveHigh),
                     fire,
                     clear,
                 });
@@ -340,7 +354,7 @@ impl AlertEngine {
                 let armed = self.armed_low.contains(&probe.id);
                 let (fire, clear) = lower(temp, threshold, margin);
                 conditions.push(Condition {
-                    key: (id, AlertKind::BelowLow),
+                    key: AlertKey::new(id, AlertKind::BelowLow),
                     fire: armed && fire,
                     clear,
                 });
@@ -362,7 +376,7 @@ impl AlertEngine {
                     .get(&probe.id)
                     .is_some_and(|since| now.since(*since) >= f64::from(self.unplugged_after_s));
             conditions.push(Condition {
-                key: (id, AlertKind::ProbeUnplugged),
+                key: AlertKey::new(id, AlertKind::ProbeUnplugged),
                 fire: unplugged,
                 clear: temp.is_some(),
             });
@@ -370,10 +384,18 @@ impl AlertEngine {
             // Stall one-shots.
             let previous = self.prev_stalled.get(&probe.id).copied().unwrap_or(false);
             if snapshot.alert_on_stall && probe.stalled && !previous {
-                deliveries.push(make_delivery((id, AlertKind::StallStarted), now, snapshot));
+                deliveries.push(make_delivery(
+                    AlertKey::new(id, AlertKind::StallStarted),
+                    now,
+                    snapshot,
+                ));
             }
             if snapshot.alert_on_stall && !probe.stalled && previous {
-                deliveries.push(make_delivery((id, AlertKind::StallEnded), now, snapshot));
+                deliveries.push(make_delivery(
+                    AlertKey::new(id, AlertKind::StallEnded),
+                    now,
+                    snapshot,
+                ));
             }
             self.prev_stalled.insert(probe.id, probe.stalled);
         }
@@ -383,7 +405,7 @@ impl AlertEngine {
             .last_reading_at
             .is_some_and(|at| now.since(at) >= f64::from(self.bt_lost_after_min) * 60.0);
         conditions.push(Condition {
-            key: (None, AlertKind::BluetoothLost),
+            key: AlertKey::new(None, AlertKind::BluetoothLost),
             fire: lost,
             clear: !lost && snapshot.last_reading_at.is_some(),
         });
@@ -394,7 +416,7 @@ impl AlertEngine {
             let clear = percent >= 25;
             if fire || clear {
                 conditions.push(Condition {
-                    key: (None, AlertKind::BatteryLow),
+                    key: AlertKey::new(None, AlertKind::BatteryLow),
                     fire,
                     clear,
                 });
@@ -403,7 +425,7 @@ impl AlertEngine {
 
         // Serve late.
         conditions.push(Condition {
-            key: (None, AlertKind::ServeLate),
+            key: AlertKey::new(None, AlertKind::ServeLate),
             fire: snapshot.serve_late,
             clear: !snapshot.serve_late,
         });
@@ -445,7 +467,7 @@ impl AlertEngine {
             return None;
         }
 
-        let temp = probe_temp(key.0, snapshot);
+        let temp = probe_temp(key.probe, snapshot);
         match self.active.get_mut(&key) {
             None => {
                 self.active.insert(
@@ -462,7 +484,7 @@ impl AlertEngine {
             }
             Some(active) => {
                 if let (Some(ack_temp), Some(current)) = (active.ack_temp_c, temp) {
-                    let direction = f32::from(key.1.direction());
+                    let direction = f32::from(key.kind.direction());
                     if (current - ack_temp) * direction >= f_delta_to_c(5.0) {
                         active.acked = false;
                         active.ack_temp_c = None;
@@ -541,7 +563,7 @@ fn pre_alert_state(
 
 fn make_delivery(key: AlertKey, _now: AppInstant, snapshot: &Snapshot) -> Delivery {
     let input = key
-        .0
+        .probe
         .and_then(|id| snapshot.probes.iter().find(|probe| probe.id == id))
         .map_or_else(TextInput::default, |probe| TextInput {
             label: probe.label.clone(),
@@ -551,7 +573,7 @@ fn make_delivery(key: AlertKey, _now: AppInstant, snapshot: &Snapshot) -> Delive
         });
     Delivery {
         key,
-        priority: key.1.priority(),
+        priority: key.kind.priority(),
         text_builder_input: input,
     }
 }
@@ -639,7 +661,7 @@ impl ActiveAlerts {
             entries.insert(
                 *key,
                 ActiveInfo {
-                    priority: key.1.priority(),
+                    priority: key.kind.priority(),
                     since: active.since,
                     acked: active.acked,
                     last_spoken,
@@ -678,8 +700,10 @@ impl ActiveAlerts {
     /// Build the spoken phrase for an alert from current numbers.
     #[must_use]
     pub fn build_text(&self, key: &AlertKey) -> String {
-        let kind = key.1;
-        let probe = key.0.and_then(|id| self.probes.iter().find(|p| p.id == id));
+        let kind = key.kind;
+        let probe = key
+            .probe
+            .and_then(|id| self.probes.iter().find(|p| p.id == id));
         let label = probe.map_or_else(String::new, |p| p.label.clone());
         let temp = probe.and_then(|p| p.temp_c).map(|c| self.unit.from_c(c));
         let degrees = |value: f32| format!("{} degrees", value.round());
@@ -805,7 +829,9 @@ mod tests {
             let now = AppInstant::from_secs_f64(f64::from(second));
             let snap = snapshot(vec![probe(1, 205.0, 203.0)]);
             for delivery in engine.evaluate(&snap, now).deliveries {
-                if delivery.key == (Some(ProbeId::new(1).unwrap()), AlertKind::TargetReached) {
+                if delivery.key
+                    == AlertKey::new(Some(ProbeId::new(1).unwrap()), AlertKind::TargetReached)
+                {
                     seen.push(second);
                 }
             }
@@ -816,7 +842,7 @@ mod tests {
     #[test]
     fn ack_stops_repeats() {
         let mut engine = AlertEngine::new(90, 2, 30);
-        let key = (Some(ProbeId::new(1).unwrap()), AlertKind::TargetReached);
+        let key = AlertKey::new(Some(ProbeId::new(1).unwrap()), AlertKind::TargetReached);
         let mut snap = snapshot(vec![probe(1, 205.0, 203.0)]);
         assert_eq!(engine.evaluate(&snap, AppInstant::ZERO).deliveries.len(), 1);
         engine.ack(key, &snap);
@@ -891,7 +917,7 @@ mod tests {
                 .evaluate(&snapshot(vec![unplugged.clone()]), now)
                 .deliveries
             {
-                if delivery.key.1 == AlertKind::ProbeUnplugged {
+                if delivery.key.kind == AlertKind::ProbeUnplugged {
                     assert_eq!(second, 30);
                     fired = true;
                 }
@@ -903,7 +929,7 @@ mod tests {
     #[test]
     fn cleared_alerts_reported_and_pruned() {
         let mut engine = AlertEngine::new(90, 2, 30);
-        let key = (Some(ProbeId::new(1).unwrap()), AlertKind::TargetReached);
+        let key = AlertKey::new(Some(ProbeId::new(1).unwrap()), AlertKind::TargetReached);
         let hot = snapshot(vec![probe(1, 205.0, 203.0)]);
         assert_eq!(engine.evaluate(&hot, AppInstant::ZERO).deliveries.len(), 1);
         let cool = snapshot(vec![probe(1, 200.0, 203.0)]);
