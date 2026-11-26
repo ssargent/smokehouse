@@ -14,6 +14,7 @@ members = [
     "crates/bbq-protocol",
     "crates/bbq-server",
     "crates/bbq-telemetry",
+    "crates/bbq-watch",
 ]
 
 [workspace.package]
@@ -39,3 +40,21 @@ print_stderr = "warn"
 
 [workspace.dependencies]
 # Add shared dependency versions here as crates are created.
+anyhow = "1.0"
+btleplug = "0.13"
+chrono = "0.4"
+clap = { version = "4.6", features = ["derive"] }
+crossterm = { version = "0.29", features = ["event-stream"] }
+csv = "1.4"
+directories = "6.0"
+futures = "0.3"
+ratatui = "0.30"
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+tokio = { version = "1.54", features = ["full"] }
+toml = "1.2"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = "1.29"
