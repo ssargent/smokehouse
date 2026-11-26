@@ -318,8 +318,13 @@ fn speech_fields() -> Vec<Field> {
         spinner(
             "Spoken status every",
             "Speak a status summary this often (0 = off).",
-            "min",
-            |s| Value::Text(s.speech.status_every_min.to_string()),
+            |s| {
+                if s.speech.status_every_min == 0 {
+                    Value::Text(String::from("off"))
+                } else {
+                    Value::Text(s.speech.status_every_min.to_string())
+                }
+            },
             |s, d| {
                 s.speech.status_every_min =
                     clamp_step(f64::from(s.speech.status_every_min), d, 0.0, 60.0, 5.0) as u32;
@@ -447,7 +452,7 @@ fn display_fields() -> Vec<Field> {
         segmented(
             "Chart window",
             "How much history the chart shows.",
-            &["whole", "6h", "2h", "30m"],
+            &["Whole cook", "6h", "2h", "30m"],
             |s| Value::Index(s.display.chart_window as usize),
             |s, d| {
                 let index = step_index(s.display.chart_window as usize, ChartWindow::ALL.len(), d);
@@ -457,7 +462,7 @@ fn display_fields() -> Vec<Field> {
         segmented(
             "Table interval",
             "Minutes between rows in the table.",
-            &["1", "5", "15"],
+            &["1m", "5m", "15m"],
             |s| {
                 Value::Index(match s.display.table_interval_min {
                     1 => 0,
