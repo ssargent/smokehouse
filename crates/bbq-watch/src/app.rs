@@ -943,15 +943,24 @@ impl App {
         }
         let wall = self.clock.wall(self.now);
         let path = dir.join(format!("history-{}.csv", wall.format("%Y-%m-%d-%H%M")));
-        let Ok(mut file) = std::fs::File::create(&path) else {
-            self.log_event(
-                EventIcon::Warning,
-                String::from("Could not create export file"),
-            );
-            return;
-        };
+        match self.write_history_csv(&path) {
+            Ok(()) => {
+                let name = path
+                    .file_name()
+                    .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+                self.log_event(EventIcon::Info, format!("Exported history to {name}"));
+            }
+            Err(err) => {
+                self.log_event(EventIcon::Warning, format!("Export failed: {err}"));
+            }
+        }
+    }
+
+    /// Write the merged history to `path`, with the same columns as the logger.
+    fn write_history_csv(&self, path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
         use std::collections::BTreeMap;
-        use std::io::Write as _;
+        let file = std::fs::File::create(path)?;
+        let mut writer = csv::Writer::from_writer(file);
         let mut table: BTreeMap<i64, [Option<f32>; PROBE_COUNT]> = BTreeMap::new();
         for index in 0..PROBE_COUNT {
             for (at, temp) in self.probes[index].history.samples() {
@@ -959,19 +968,27 @@ impl App {
                 entry[index] = *temp;
             }
         }
-        let _ = writeln!(file, "elapsed_s,p1_c,p2_c,p3_c,p4_c");
+        writer.write_record(crate::logger::HEADER)?;
+        let started = self.clock.wall(AppInstant::ZERO);
         for (elapsed, temps) in table {
-            let cells: Vec<String> = temps
-                .iter()
-                .map(|value| value.map_or_else(String::new, |temp| format!("{temp:.1}")))
-                .collect();
-            let _ = writeln!(file, "{elapsed},{}", cells.join(","));
+            let at = started + chrono::Duration::seconds(elapsed);
+            let mut record: Vec<String> = Vec::with_capacity(crate::logger::HEADER.len());
+            record.push(at.format("%Y-%m-%d %H:%M:%S").to_string());
+            record.push(elapsed.to_string());
+            record.extend(
+                temps
+                    .iter()
+                    .map(|t| t.map_or_else(String::new, |c| format!("{c:.1}"))),
+            );
+            record.extend(temps.iter().map(|t| {
+                t.map_or_else(String::new, |c| format!("{:.1}", celsius_to_fahrenheit(c)))
+            }));
+            record.push(String::new());
+            record.push(String::new());
+            writer.write_record(&record)?;
         }
-        let _ = file.flush();
-        let name = path
-            .file_name()
-            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-        self.log_event(EventIcon::Info, format!("Exported history to {name}"));
+        writer.flush()?;
+        Ok(())
     }
 
     fn request_quit(&mut self) {

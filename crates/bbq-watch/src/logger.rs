@@ -8,9 +8,8 @@ use csv::Writer;
 
 use crate::clock::AppInstant;
 use crate::model::celsius_to_fahrenheit;
-
 /// Header row for a cook CSV.
-const HEADER: [&str; 12] = [
+pub const HEADER: [&str; 12] = [
     "timestamp",
     "elapsed_s",
     "p1_c",
