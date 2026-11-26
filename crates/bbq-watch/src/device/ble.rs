@@ -57,8 +57,9 @@ enum SessionOutcome {
     Rescan,
     /// Forget requested.
     Forget,
-    /// The connection dropped.
-    Disconnected(String),
+    /// The connection dropped. `connected` records whether it had reached
+    /// `Connected` first, so a healthy session resets the backoff.
+    Disconnected { reason: String, connected: bool },
 }
 
 /// Run the BLE device task until told to shut down.
@@ -122,22 +123,58 @@ pub async fn run(
                 saved_id.clear();
                 backoff_idx = 0;
             }
-            SessionOutcome::Disconnected(reason) => {
+            SessionOutcome::Disconnected { reason, connected } => {
                 let _ = tx.send(DeviceEvent::Disconnected { reason }).await;
-                let delay = if cfg.auto_reconnect {
-                    let delay = BACKOFF[backoff_idx.min(BACKOFF.len() - 1)];
-                    backoff_idx += 1;
-                    delay
-                } else {
-                    Duration::from_secs(3600)
-                };
-                if matches!(
-                    wait_cmd(delay, &mut cmd, &mut saved_id).await,
-                    Wait::Shutdown
-                ) {
-                    return;
+                match reconnect_delay(cfg.auto_reconnect, connected, &mut backoff_idx) {
+                    Some(delay) => {
+                        if matches!(
+                            wait_cmd(delay, &mut cmd, &mut saved_id).await,
+                            Wait::Shutdown
+                        ) {
+                            return;
+                        }
+                    }
+                    None => {
+                        if matches!(wait_forever(&mut cmd, &mut saved_id).await, Wait::Shutdown) {
+                            return;
+                        }
+                    }
                 }
             }
+        }
+    }
+}
+
+/// Delay before the next reconnect, or `None` to wait for a command. Reaching
+/// `Connected` resets the backoff so a drop after hours does not wait long.
+fn reconnect_delay(
+    auto_reconnect: bool,
+    connected: bool,
+    backoff_idx: &mut usize,
+) -> Option<Duration> {
+    if connected {
+        *backoff_idx = 0;
+    }
+    if !auto_reconnect {
+        return None;
+    }
+    let delay = BACKOFF[(*backoff_idx).min(BACKOFF.len() - 1)];
+    *backoff_idx += 1;
+    Some(delay)
+}
+
+/// Wait for `Rescan` or `Shutdown` indefinitely (used when auto-reconnect is
+/// off), without reconnecting on its own.
+async fn wait_forever(cmd: &mut mpsc::Receiver<DeviceCommand>, saved_id: &mut String) -> Wait {
+    loop {
+        match cmd.recv().await {
+            None | Some(DeviceCommand::Shutdown) => return Wait::Shutdown,
+            Some(DeviceCommand::Rescan) => return Wait::Abort,
+            Some(DeviceCommand::Forget) => {
+                saved_id.clear();
+                return Wait::Abort;
+            }
+            Some(DeviceCommand::SetDeviceUnits(_)) => {}
         }
     }
 }
@@ -249,11 +286,17 @@ async fn session(
     let _ = adapter.stop_scan().await;
 
     if let Err(err) = peripheral.connect().await {
-        return SessionOutcome::Disconnected(format!("connect failed: {err}"));
+        return SessionOutcome::Disconnected {
+            reason: format!("connect failed: {err}"),
+            connected: false,
+        };
     }
     if let Err(err) = peripheral.discover_services().await {
         let _ = peripheral.disconnect().await;
-        return SessionOutcome::Disconnected(format!("service discovery failed: {err}"));
+        return SessionOutcome::Disconnected {
+            reason: format!("service discovery failed: {err}"),
+            connected: false,
+        };
     }
 
     // The notifications stream must be taken before subscribing.
@@ -261,7 +304,10 @@ async fn session(
         Ok(stream) => stream,
         Err(err) => {
             let _ = peripheral.disconnect().await;
-            return SessionOutcome::Disconnected(format!("notifications failed: {err}"));
+            return SessionOutcome::Disconnected {
+                reason: format!("notifications failed: {err}"),
+                connected: false,
+            };
         }
     };
 
@@ -277,20 +323,32 @@ async fn session(
         find(ibbq::CHAR_SETTINGS_RESULT),
     ) else {
         let _ = peripheral.disconnect().await;
-        return SessionOutcome::Disconnected(String::from("required characteristics missing"));
+        return SessionOutcome::Disconnected {
+            reason: String::from("required characteristics missing"),
+            connected: false,
+        };
     };
 
     if let Err(err) = write_char(peripheral, &account, ibbq::LOGIN).await {
         let _ = peripheral.disconnect().await;
-        return SessionOutcome::Disconnected(format!("login failed: {err}"));
+        return SessionOutcome::Disconnected {
+            reason: format!("login failed: {err}"),
+            connected: false,
+        };
     }
     if let Err(err) = peripheral.subscribe(&realtime).await {
         let _ = peripheral.disconnect().await;
-        return SessionOutcome::Disconnected(format!("subscribe failed: {err}"));
+        return SessionOutcome::Disconnected {
+            reason: format!("subscribe failed: {err}"),
+            connected: false,
+        };
     }
     if let Err(err) = peripheral.subscribe(&result).await {
         let _ = peripheral.disconnect().await;
-        return SessionOutcome::Disconnected(format!("subscribe failed: {err}"));
+        return SessionOutcome::Disconnected {
+            reason: format!("subscribe failed: {err}"),
+            connected: false,
+        };
     }
     let _ = write_char(peripheral, &settings, ibbq::ENABLE_REALTIME).await;
     let _ = write_char(peripheral, &settings, ibbq::encode_units(cfg.device_units)).await;
@@ -320,7 +378,10 @@ async fn session(
                 match note {
                     None => {
                         let _ = peripheral.disconnect().await;
-                        return SessionOutcome::Disconnected(String::from("connection lost"));
+                        return SessionOutcome::Disconnected {
+                            reason: String::from("connection lost"),
+                            connected: true,
+                        };
                     }
                     Some(note) => handle_notification(&note, clock, tx).await,
                 }
@@ -405,5 +466,42 @@ pub fn short_id(id: &str) -> String {
         format!("{short}…")
     } else {
         short
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backoff_resets_after_a_healthy_connection() {
+        // Five failures of backoff would mean a 30s wait; a connection resets it.
+        let mut idx = 5;
+        assert_eq!(
+            reconnect_delay(true, true, &mut idx),
+            Some(Duration::from_secs(5))
+        );
+        assert_eq!(idx, 1);
+    }
+
+    #[test]
+    fn backoff_grows_without_a_connection() {
+        let mut idx = 0;
+        assert_eq!(
+            reconnect_delay(true, false, &mut idx),
+            Some(Duration::from_secs(5))
+        );
+        assert_eq!(
+            reconnect_delay(true, false, &mut idx),
+            Some(Duration::from_secs(10))
+        );
+        assert_eq!(idx, 2);
+    }
+
+    #[test]
+    fn auto_reconnect_off_waits_for_a_command() {
+        let mut idx = 3;
+        assert_eq!(reconnect_delay(false, false, &mut idx), None);
     }
 }
