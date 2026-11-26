@@ -629,6 +629,17 @@ impl Settings {
         self.preset(id).is_some_and(|preset| preset.pit)
     }
 
+    /// Probe indices that follow the preset with `id`.
+    #[must_use]
+    pub fn preset_users(&self, id: &str) -> Vec<usize> {
+        self.probes
+            .iter()
+            .enumerate()
+            .filter(|(_, probe)| probe.preset == id)
+            .map(|(index, _)| index)
+            .collect()
+    }
+
     /// Apply a preset to a probe: copy its values and record that the probe
     /// follows it. Custom leaves the values alone and only clears the link.
     pub fn apply_preset(&mut self, index: usize, preset_id: &str) {

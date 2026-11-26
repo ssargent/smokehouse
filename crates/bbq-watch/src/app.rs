@@ -770,7 +770,7 @@ impl App {
             }
             return;
         }
-        if self.settings_ui.preset_popup || self.settings_ui.editing {
+        if self.tab == crate::ui::Tab::Settings && self.settings_ui.overlay_active() {
             ui::settings::handle_key(self, key);
             return;
         }
@@ -1179,6 +1179,8 @@ mod tests {
     async fn esc_never_discards_settings() {
         let (mut app, path) = harness().await;
         press(&mut app, KeyCode::Char('5')).await;
+        // Probes section: Enter opens the probe form, Enter edits the label.
+        press(&mut app, KeyCode::Enter).await;
         press(&mut app, KeyCode::Enter).await;
         press_mod(
             &mut app,
@@ -1201,8 +1203,8 @@ mod tests {
     async fn space_in_preset_list_does_not_toggle_pit() {
         let (mut app, path) = harness().await;
         press(&mut app, KeyCode::Char('5')).await;
-        press(&mut app, KeyCode::Char('p')).await;
-        assert!(app.settings_ui.preset_popup);
+        // Move from Probes to the Presets section.
+        press(&mut app, KeyCode::Tab).await;
         press(&mut app, KeyCode::Char(' ')).await;
         assert!(!app.settings.presets[0].pit);
         assert!(!app.settings.is_pit(0));
@@ -1251,6 +1253,65 @@ mod tests {
             .insert(String::from("boom"), AppInstant::from_secs_f64(-10_000.0));
         app.push_error_event("boom");
         assert_eq!(app.events.len(), 2);
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn every_setting_is_visible() {
+        let (mut app, path) = harness().await;
+        press(&mut app, KeyCode::Char('5')).await;
+        for section in 2..7 {
+            let labels = ui::settings::field_labels(section);
+            assert!(!labels.is_empty(), "section {section} has no fields");
+            for (index, label) in labels.iter().enumerate() {
+                app.settings_ui.section = section;
+                app.settings_ui.field = index;
+                let text = render(&app);
+                assert!(
+                    text.contains(label),
+                    "section {section} field {label:?} not visible"
+                );
+            }
+        }
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn probe_and_preset_forms_open() {
+        let (mut app, path) = harness().await;
+        press(&mut app, KeyCode::Char('5')).await;
+        press(&mut app, KeyCode::Enter).await;
+        assert!(render(&app).contains("Edit probe P1"));
+        press(&mut app, KeyCode::Esc).await;
+        press(&mut app, KeyCode::Tab).await;
+        press(&mut app, KeyCode::Enter).await;
+        let text = render(&app);
+        assert!(
+            text.contains("Edit preset"),
+            "preset form not open:\n{text}"
+        );
+        assert!(
+            text.contains("Used by: P1, P2"),
+            "used-by line missing:\n{text}"
+        );
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn preset_form_uses_user_units() {
+        let (mut app, path) = harness().await;
+        app.settings.display.units = Unit::Celsius;
+        press(&mut app, KeyCode::Char('5')).await;
+        press(&mut app, KeyCode::Tab).await;
+        press(&mut app, KeyCode::Enter).await;
+        let text = render(&app);
+        assert!(text.contains("95"), "target should show °C:\n{text}");
+        press(&mut app, KeyCode::Down).await; // Type
+        press(&mut app, KeyCode::Down).await; // Target
+        let before = app.settings.presets[0].target_f.unwrap();
+        press(&mut app, KeyCode::Right).await;
+        let after = app.settings.presets[0].target_f.unwrap();
+        assert!((after - before - 1.8).abs() < 0.01, "expected a 1°C step");
         cleanup(&path);
     }
 }
