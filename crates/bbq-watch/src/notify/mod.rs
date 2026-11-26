@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use std::sync::Mutex;
 use tokio::sync::mpsc;
+use tokio::sync::watch;
 
 use crate::alerts::{ActiveAlerts, Delivery, Priority};
 use crate::clock::AppClock;
@@ -35,8 +36,6 @@ impl NotifyError {
 /// Messages the notifier task handles.
 #[derive(Debug)]
 pub enum NotifyMsg {
-    /// Settings changed.
-    Settings(Box<Settings>),
     /// Deliver one alert.
     Delivery(Box<Delivery>),
     /// Send a fake urgent delivery through every channel.
@@ -65,13 +64,6 @@ impl Notifier {
         {
             tracing::warn!("notifier channel full; dropped an alert");
         }
-    }
-
-    /// Replace the settings the notifier uses.
-    pub fn update_settings(&self, settings: &Settings) {
-        let _ = self
-            .tx
-            .try_send(NotifyMsg::Settings(Box::new(settings.clone())));
     }
 
     /// Send a fake urgent delivery through every channel.
@@ -103,16 +95,23 @@ pub fn spawn(
     settings: &Settings,
     no_speech: bool,
     errors: mpsc::Sender<String>,
+    settings_rx: watch::Receiver<Settings>,
 ) -> Notifier {
     let (tx, rx) = mpsc::channel(64);
-    let speech = speech::spawn(clock, Arc::clone(&shared), settings, no_speech);
+    let speech = speech::spawn(
+        clock,
+        Arc::clone(&shared),
+        settings,
+        no_speech,
+        settings_rx.clone(),
+    );
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
         .ok();
     let settings = settings.clone();
     tokio::spawn(async move {
-        run(rx, speech, shared, client, settings, errors).await;
+        run(rx, speech, shared, client, settings, errors, settings_rx).await;
     });
     Notifier { tx }
 }
@@ -124,42 +123,49 @@ async fn run(
     client: Option<reqwest::Client>,
     mut settings: Settings,
     errors: mpsc::Sender<String>,
+    mut settings_rx: watch::Receiver<Settings>,
 ) {
-    while let Some(msg) = rx.recv().await {
-        match msg {
-            NotifyMsg::Settings(new) => {
-                settings = *new;
-                speech.update_settings(&settings);
+    loop {
+        tokio::select! {
+            changed = settings_rx.changed() => {
+                if changed.is_err() {
+                    break;
+                }
+                settings = settings_rx.borrow_and_update().clone();
             }
-            NotifyMsg::Delivery(delivery) => {
-                dispatch(
-                    &delivery,
-                    &settings,
-                    &speech,
-                    &shared,
-                    client.as_ref(),
-                    &errors,
-                )
-                .await;
-            }
-            NotifyMsg::Test => {
-                dispatch_test(&settings, &speech, client.as_ref(), &errors).await;
-            }
-            NotifyMsg::Status => {
-                speech.item(SpeechItem {
-                    key: SpeechKey::Status,
-                    priority: Priority::Normal,
-                });
-            }
-            NotifyMsg::PreviewVoice => {
-                speech.item(SpeechItem {
-                    key: SpeechKey::Preview,
-                    priority: Priority::Urgent,
-                });
-            }
-            NotifyMsg::Shutdown => {
-                speech.shutdown();
-                break;
+            msg = rx.recv() => {
+                match msg {
+                    None | Some(NotifyMsg::Shutdown) => {
+                        speech.shutdown();
+                        break;
+                    }
+                    Some(NotifyMsg::Delivery(delivery)) => {
+                        dispatch(
+                            &delivery,
+                            &settings,
+                            &speech,
+                            &shared,
+                            client.as_ref(),
+                            &errors,
+                        )
+                        .await;
+                    }
+                    Some(NotifyMsg::Test) => {
+                        dispatch_test(&settings, &speech, client.as_ref(), &errors).await;
+                    }
+                    Some(NotifyMsg::Status) => {
+                        speech.item(SpeechItem {
+                            key: SpeechKey::Status,
+                            priority: Priority::Normal,
+                        });
+                    }
+                    Some(NotifyMsg::PreviewVoice) => {
+                        speech.item(SpeechItem {
+                            key: SpeechKey::Preview,
+                            priority: Priority::Urgent,
+                        });
+                    }
+                }
             }
         }
     }

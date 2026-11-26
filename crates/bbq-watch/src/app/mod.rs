@@ -176,6 +176,7 @@ pub struct App {
     pub(crate) logger: CsvLogger,
     pub(crate) caffeinate: Caffeinate,
     pub(crate) notifier: Notifier,
+    pub(crate) settings_tx: tokio::sync::watch::Sender<Settings>,
     pub(crate) device_tx: mpsc::Sender<DeviceCommand>,
     pub(crate) voices: Vec<String>,
     pub(crate) audio_devices: Vec<String>,
@@ -190,8 +191,10 @@ async fn build(
 ) -> (App, mpsc::Receiver<DeviceEvent>, mpsc::Receiver<String>) {
     let demo = cli.demo;
     let shared = Arc::new(Mutex::new(ActiveAlerts::default()));
+    let (settings_tx, settings_rx) = tokio::sync::watch::channel(settings.clone());
     let device_config = device::DeviceConfig::from_settings(&settings, clock.speed());
-    let (device_rx, device_tx) = device::spawn_device(device_config, clock.clone(), demo);
+    let (device_rx, device_tx) =
+        device::spawn_device(device_config, clock.clone(), demo, settings_rx.clone());
     let (error_tx, error_rx) = mpsc::channel(16);
     let notifier = crate::notify::spawn(
         clock.clone(),
@@ -199,6 +202,7 @@ async fn build(
         &settings,
         cli.no_speech,
         error_tx,
+        settings_rx,
     );
     let voices = crate::notify::speech::list_voices().await;
     let audio_devices = crate::notify::speech::list_audio_devices().await;
@@ -260,6 +264,7 @@ async fn build(
         caffeinate,
         notifier,
         device_tx,
+        settings_tx,
         voices,
         audio_devices,
     };

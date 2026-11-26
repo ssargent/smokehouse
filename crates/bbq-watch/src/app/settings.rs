@@ -11,7 +11,7 @@ impl App {
             self.settings.alarms.bt_lost_after_min,
             self.settings.alarms.unplugged_after_s,
         );
-        self.notifier.update_settings(&self.settings);
+        let _ = self.settings_tx.send(self.settings.clone());
         self.logger.set_config(
             self.settings.data.csv_enabled,
             self.settings.csv_dir(),

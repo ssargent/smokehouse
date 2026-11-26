@@ -11,9 +11,10 @@ use btleplug::api::{
 };
 use btleplug::platform::{Adapter, Manager, Peripheral};
 use futures::StreamExt;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use crate::clock::{AppClock, Clock};
+use crate::config::Settings;
 use crate::device::ibbq;
 use crate::device::{DeviceCommand, DeviceConfig, DeviceError, DeviceEvent};
 
@@ -62,17 +63,34 @@ enum SessionOutcome {
     Disconnected { reason: String, connected: bool },
 }
 
+/// Refresh the device config from the latest settings between reconnects.
+fn apply_settings(cfg: &mut DeviceConfig, rx: &mut watch::Receiver<Settings>) {
+    if rx.has_changed().unwrap_or(false) {
+        let settings = rx.borrow_and_update().clone();
+        cfg.auto_reconnect = settings.device.auto_reconnect;
+        cfg.battery_check_min = settings.device.battery_check_min;
+        cfg.sample_interval_s = settings.data.sample_interval_s;
+        cfg.device_units = settings
+            .device
+            .device_screen_units
+            .resolve(settings.display.units);
+    }
+}
+
 /// Run the BLE device task until told to shut down.
 pub async fn run(
-    cfg: DeviceConfig,
+    mut cfg: DeviceConfig,
     clock: AppClock,
     tx: mpsc::Sender<DeviceEvent>,
     mut cmd: mpsc::Receiver<DeviceCommand>,
+    mut settings_rx: watch::Receiver<Settings>,
 ) {
     let mut saved_id = cfg.peripheral_id.clone();
     let mut backoff_idx = 0_usize;
 
     loop {
+        apply_settings(&mut cfg, &mut settings_rx);
+
         let adapter = match get_adapter().await {
             Ok(adapter) => adapter,
             Err(err) => {

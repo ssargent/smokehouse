@@ -89,6 +89,7 @@ pub async fn run(
     clock: AppClock,
     tx: mpsc::Sender<DeviceEvent>,
     mut cmd: mpsc::Receiver<DeviceCommand>,
+    _settings_rx: tokio::sync::watch::Receiver<crate::config::Settings>,
 ) {
     let mut sim = DemoSim::new();
     let mut unplugged = [false; PROBE_COUNT];

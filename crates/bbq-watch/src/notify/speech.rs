@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use std::sync::Mutex;
 use tokio::sync::mpsc;
+use tokio::sync::watch;
 
 use crate::alerts::{ActiveAlerts, AlertKey, Priority};
 use crate::clock::{AppClock, Clock};
@@ -55,8 +56,6 @@ pub struct SpeechItem {
 pub enum SpeechMsg {
     /// Queue an item.
     Item(SpeechItem),
-    /// Replace the speech settings.
-    Settings(Box<Settings>),
     /// Queue the voice preview.
     Preview,
     /// Stop the worker.
@@ -203,13 +202,6 @@ impl SpeechHandle {
         let _ = self.tx.try_send(SpeechMsg::Item(item));
     }
 
-    /// Replace the speech settings.
-    pub fn update_settings(&self, settings: &Settings) {
-        let _ = self
-            .tx
-            .try_send(SpeechMsg::Settings(Box::new(settings.clone())));
-    }
-
     /// Queue the voice preview.
     pub fn preview(&self) {
         let _ = self.tx.try_send(SpeechMsg::Preview);
@@ -228,6 +220,7 @@ pub fn spawn(
     shared: Arc<Mutex<ActiveAlerts>>,
     settings: &Settings,
     no_speech: bool,
+    settings_rx: watch::Receiver<Settings>,
 ) -> SpeechHandle {
     let (tx, mut rx) = mpsc::channel(64);
     match detect_speaker() {
@@ -242,6 +235,7 @@ pub fn spawn(
                     &mut speech_settings,
                     no_speech,
                     &mut rx,
+                    settings_rx,
                 )
                 .await;
             });
@@ -262,6 +256,7 @@ async fn run_worker(
     settings: &mut SpeechSettings,
     force_off: bool,
     rx: &mut mpsc::Receiver<SpeechMsg>,
+    mut settings_rx: watch::Receiver<Settings>,
 ) {
     let mut queue = SpeechQueue::new();
     let mut speaking: Option<(SpeechItem, SpeechFuture)> = None;
@@ -284,10 +279,14 @@ async fn run_worker(
         }
 
         tokio::select! {
+            changed = settings_rx.changed() => {
+                if changed.is_ok() {
+                    *settings = settings_rx.borrow_and_update().speech.clone();
+                }
+            }
             msg = rx.recv() => {
                 match msg {
                     None | Some(SpeechMsg::Shutdown) => break,
-                    Some(SpeechMsg::Settings(new)) => *settings = new.speech,
                     Some(SpeechMsg::Preview) => queue.push(SpeechItem {
                         key: SpeechKey::Preview,
                         priority: Priority::Urgent,
@@ -561,6 +560,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(16);
         let clock = AppClock::new(1.0);
         let mut settings = settings;
+        let (_settings_tx, settings_rx) = watch::channel(Settings::default());
         let handle = tokio::spawn(async move {
             let clock_ref: &dyn Clock = &clock;
             run_worker(
@@ -570,6 +570,7 @@ mod tests {
                 &mut settings,
                 force_off,
                 &mut rx,
+                settings_rx,
             )
             .await;
         });

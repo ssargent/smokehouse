@@ -4,7 +4,7 @@ pub mod ble;
 pub mod demo;
 pub mod ibbq;
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use crate::clock::{AppClock, AppInstant};
 use crate::config::Settings;
@@ -107,19 +107,19 @@ impl DeviceConfig {
 }
 
 /// Spawn the device task, returning its event receiver and command sender.
-#[must_use]
 pub fn spawn_device(
     cfg: DeviceConfig,
     clock: AppClock,
     demo: bool,
+    settings_rx: watch::Receiver<Settings>,
 ) -> (mpsc::Receiver<DeviceEvent>, mpsc::Sender<DeviceCommand>) {
     let (event_tx, event_rx) = mpsc::channel(64);
     let (command_tx, command_rx) = mpsc::channel(8);
     tokio::spawn(async move {
         if demo {
-            demo::run(cfg, clock, event_tx, command_rx).await;
+            demo::run(cfg, clock, event_tx, command_rx, settings_rx).await;
         } else {
-            ble::run(cfg, clock, event_tx, command_rx).await;
+            ble::run(cfg, clock, event_tx, command_rx, settings_rx).await;
         }
     });
     (event_rx, command_tx)
