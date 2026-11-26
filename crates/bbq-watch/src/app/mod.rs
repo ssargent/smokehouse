@@ -193,7 +193,7 @@ async fn build(
     let (device_rx, device_tx) = device::spawn_device(device_config, clock.clone(), demo);
     let (error_tx, error_rx) = mpsc::channel(16);
     let notifier = crate::notify::spawn(
-        Arc::new(clock.clone()),
+        clock.clone(),
         Arc::clone(&shared),
         &settings,
         cli.no_speech,

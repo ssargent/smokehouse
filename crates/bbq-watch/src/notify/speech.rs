@@ -225,7 +225,7 @@ impl SpeechHandle {
 /// Spawn the speech worker.
 #[must_use]
 pub fn spawn(
-    clock: Arc<AppClock>,
+    clock: AppClock,
     shared: Arc<Mutex<ActiveAlerts>>,
     settings: &Settings,
     no_speech: bool,
@@ -235,7 +235,7 @@ pub fn spawn(
         Some(mut speaker) => {
             let mut speech_settings = settings.speech.clone();
             tokio::spawn(async move {
-                let clock_ref: &dyn Clock = clock.as_ref();
+                let clock_ref: &dyn Clock = &clock;
                 run_worker(
                     speaker.as_mut(),
                     clock_ref,

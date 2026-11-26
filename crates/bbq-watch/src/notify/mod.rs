@@ -98,14 +98,14 @@ impl Notifier {
 /// Spawn the notifier and speech tasks.
 #[must_use]
 pub fn spawn(
-    clock: Arc<AppClock>,
+    clock: AppClock,
     shared: Arc<Mutex<ActiveAlerts>>,
     settings: &Settings,
     no_speech: bool,
     errors: mpsc::Sender<String>,
 ) -> Notifier {
     let (tx, rx) = mpsc::channel(64);
-    let speech = speech::spawn(Arc::clone(&clock), Arc::clone(&shared), settings, no_speech);
+    let speech = speech::spawn(clock, Arc::clone(&shared), settings, no_speech);
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
@@ -208,13 +208,13 @@ fn fan_out(
 ) {
     if settings.alarms.sound {
         let file = settings.alarms.sound_file.clone();
-        spawn_logged("sound", Arc::clone(&settings_errors(errors)), async move {
+        spawn_logged("sound", settings_errors(errors), async move {
             sound::play(&file).await
         });
     }
     if settings.alarms.banner {
         let text = message.to_string();
-        spawn_logged("banner", Arc::clone(&settings_errors(errors)), async move {
+        spawn_logged("banner", settings_errors(errors), async move {
             banner::show(&text).await
         });
     }
@@ -225,18 +225,18 @@ fn fan_out(
         let client = client.clone();
         let text = message.to_string();
         let topic = settings.alarms.ntfy_topic.clone();
-        spawn_logged("ntfy", Arc::clone(&settings_errors(errors)), async move {
+        spawn_logged("ntfy", settings_errors(errors), async move {
             ntfy::push(&client, &topic, &text, urgent).await
         });
     }
 }
 
-fn settings_errors(errors: &mpsc::Sender<String>) -> Arc<mpsc::Sender<String>> {
-    // The notifier's error sink, wrapped so the spawned task can own a handle.
-    Arc::new(errors.clone())
+fn settings_errors(errors: &mpsc::Sender<String>) -> mpsc::Sender<String> {
+    // Sender is already a cheap handle; spawn_logged can own a clone.
+    errors.clone()
 }
 
-fn spawn_logged<F>(name: &'static str, errors: Arc<mpsc::Sender<String>>, fut: F)
+fn spawn_logged<F>(name: &'static str, errors: mpsc::Sender<String>, fut: F)
 where
     F: Future<Output = Result<(), NotifyError>> + Send + 'static,
 {
