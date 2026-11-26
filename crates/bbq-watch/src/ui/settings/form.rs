@@ -5,15 +5,36 @@ use crate::app::App;
 use crate::config::{ChartWindow, DeviceScreenUnits, EtaMethod, Settings};
 use crate::model::{Unit, celsius_to_fahrenheit, fahrenheit_to_celsius};
 
-/// Kind of a settings field.
+/// Kind of a settings field, carrying the accessors for that kind.
 pub(super) enum Kind {
-    Toggle,
-    Spinner { unit: &'static str },
-    Segmented { options: &'static [&'static str] },
-    Text,
-    Time,
-    Voice,
-    AudioDevice,
+    Toggle {
+        get: GetFn,
+        flip: ToggleFn,
+    },
+    Spinner {
+        get: GetFn,
+        step: StepFn,
+        unit: &'static str,
+    },
+    Segmented {
+        get: GetFn,
+        step: StepFn,
+        options: &'static [&'static str],
+    },
+    Text {
+        get: GetFn,
+        set: TextFn,
+    },
+    Time {
+        get: GetFn,
+        set: TextFn,
+    },
+    Voice {
+        get: GetFn,
+    },
+    AudioDevice {
+        get: GetFn,
+    },
     Button(Action),
 }
 
@@ -42,30 +63,13 @@ pub(super) struct Field {
     pub(super) label: &'static str,
     pub(super) help: &'static str,
     pub(super) kind: Kind,
-    pub(super) get: GetFn,
-    pub(super) step: StepFn,
-    pub(super) toggle: ToggleFn,
-    pub(super) set_text: TextFn,
 }
 
-fn noop_step(_settings: &mut Settings, _dir: i32) {}
-fn noop_toggle(_settings: &mut Settings) {}
-fn noop_text(_settings: &mut Settings, _value: &str) {}
-
-pub(super) fn toggle(
-    label: &'static str,
-    help: &'static str,
-    get: GetFn,
-    toggle: ToggleFn,
-) -> Field {
+pub(super) fn toggle(label: &'static str, help: &'static str, get: GetFn, flip: ToggleFn) -> Field {
     Field {
         label,
         help,
-        kind: Kind::Toggle,
-        get,
-        step: noop_step,
-        toggle,
-        set_text: noop_text,
+        kind: Kind::Toggle { get, flip },
     }
 }
 
@@ -74,16 +78,12 @@ pub(super) fn spinner(
     help: &'static str,
     unit: &'static str,
     get: GetFn,
-    step_fn: StepFn,
+    step: StepFn,
 ) -> Field {
     Field {
         label,
         help,
-        kind: Kind::Spinner { unit },
-        get,
-        step: step_fn,
-        toggle: noop_toggle,
-        set_text: noop_text,
+        kind: Kind::Spinner { get, step, unit },
     }
 }
 
@@ -97,47 +97,39 @@ pub(super) fn segmented(
     Field {
         label,
         help,
-        kind: Kind::Segmented { options },
-        get,
-        step,
-        toggle: noop_toggle,
-        set_text: noop_text,
+        kind: Kind::Segmented { get, step, options },
     }
 }
 
-pub(super) fn text(label: &'static str, help: &'static str, get: GetFn, set_text: TextFn) -> Field {
+pub(super) fn text(label: &'static str, help: &'static str, get: GetFn, set: TextFn) -> Field {
     Field {
         label,
         help,
-        kind: Kind::Text,
-        get,
-        step: noop_step,
-        toggle: noop_toggle,
-        set_text,
+        kind: Kind::Text { get, set },
     }
 }
 
-pub(super) fn time(label: &'static str, help: &'static str, get: GetFn, set_text: TextFn) -> Field {
+pub(super) fn time(label: &'static str, help: &'static str, get: GetFn, set: TextFn) -> Field {
     Field {
         label,
         help,
-        kind: Kind::Time,
-        get,
-        step: noop_step,
-        toggle: noop_toggle,
-        set_text,
+        kind: Kind::Time { get, set },
     }
 }
 
-pub(super) fn choice(label: &'static str, help: &'static str, kind: Kind, get: GetFn) -> Field {
+pub(super) fn voice(label: &'static str, help: &'static str, get: GetFn) -> Field {
     Field {
         label,
         help,
-        kind,
-        get,
-        step: noop_step,
-        toggle: noop_toggle,
-        set_text: noop_text,
+        kind: Kind::Voice { get },
+    }
+}
+
+pub(super) fn audio_device(label: &'static str, help: &'static str, get: GetFn) -> Field {
+    Field {
+        label,
+        help,
+        kind: Kind::AudioDevice { get },
     }
 }
 
@@ -146,10 +138,6 @@ pub(super) fn button(label: &'static str, help: &'static str, action: Action) ->
         label,
         help,
         kind: Kind::Button(action),
-        get: |_| Value::Text(String::new()),
-        step: noop_step,
-        toggle: noop_toggle,
-        set_text: noop_text,
     }
 }
 
@@ -274,7 +262,7 @@ fn speech_fields() -> Vec<Field> {
             |s| Value::Bool(s.speech.enabled),
             |s| s.speech.enabled = !s.speech.enabled,
         ),
-        choice("Voice", "The say(1) voice to use.", Kind::Voice, |s| {
+        voice("Voice", "The say(1) voice to use.", |s| {
             if s.speech.voice.is_empty() {
                 Value::Text(String::from("System default"))
             } else {
@@ -291,18 +279,13 @@ fn speech_fields() -> Vec<Field> {
                     clamp_step(f64::from(s.speech.rate_wpm), d, 90.0, 360.0, 10.0) as u32;
             },
         ),
-        choice(
-            "Audio output",
-            "Audio device for spoken alerts.",
-            Kind::AudioDevice,
-            |s| {
-                if s.speech.audio_device.is_empty() {
-                    Value::Text(String::from("Default"))
-                } else {
-                    Value::Text(s.speech.audio_device.clone())
-                }
-            },
-        ),
+        audio_device("Audio output", "Audio device for spoken alerts.", |s| {
+            if s.speech.audio_device.is_empty() {
+                Value::Text(String::from("Default"))
+            } else {
+                Value::Text(s.speech.audio_device.clone())
+            }
+        }),
         toggle(
             "Urgent only",
             "Skip normal-priority alerts.",

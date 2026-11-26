@@ -279,16 +279,25 @@ fn render_field(field: &Field, settings: &Settings, app: &App, selected: bool) -
         Style::default().fg(theme::FG)
     };
     let mut spans = vec![Span::styled(format!(" {:<26}", field.label), label_style)];
-    let value = (field.get)(settings);
+    let value = match &field.kind {
+        Kind::Toggle { get, .. }
+        | Kind::Spinner { get, .. }
+        | Kind::Segmented { get, .. }
+        | Kind::Text { get, .. }
+        | Kind::Time { get, .. }
+        | Kind::Voice { get }
+        | Kind::AudioDevice { get } => get(settings),
+        Kind::Button(_) => Value::Text(String::new()),
+    };
     match &field.kind {
-        Kind::Toggle => {
+        Kind::Toggle { .. } => {
             let on = matches!(value, Value::Bool(true));
             spans.push(Span::styled(
                 if on { "[x]" } else { "[ ]" },
                 Style::default().fg(if on { theme::GREEN } else { theme::MUTED }),
             ));
         }
-        Kind::Spinner { unit } => {
+        Kind::Spinner { unit, .. } => {
             let text = if let Value::Text(text) = value {
                 text
             } else {
@@ -307,7 +316,7 @@ fn render_field(field: &Field, settings: &Settings, app: &App, selected: bool) -
                 Style::default().fg(theme::MUTED),
             ));
         }
-        Kind::Segmented { options } => {
+        Kind::Segmented { options, .. } => {
             let index = if let Value::Index(index) = value {
                 index
             } else {
@@ -325,7 +334,7 @@ fn render_field(field: &Field, settings: &Settings, app: &App, selected: bool) -
                 ));
             }
         }
-        Kind::Text | Kind::Time | Kind::Voice | Kind::AudioDevice => {
+        Kind::Text { .. } | Kind::Time { .. } | Kind::Voice { .. } | Kind::AudioDevice { .. } => {
             let text = if let Value::Text(text) = value {
                 text
             } else {

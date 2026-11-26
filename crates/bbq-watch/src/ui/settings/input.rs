@@ -84,17 +84,17 @@ fn step_field(app: &mut App, direction: i32, shift: bool) {
         return;
     };
     let direction = if shift { direction * 5 } else { direction };
-    match field.kind {
-        Kind::Segmented { .. } => {
-            (field.step)(&mut app.settings, direction.signum());
+    match &field.kind {
+        Kind::Segmented { step, .. } => {
+            step(&mut app.settings, direction.signum());
             app.commit_settings();
         }
-        Kind::Spinner { .. } => {
-            (field.step)(&mut app.settings, direction);
+        Kind::Spinner { step, .. } => {
+            step(&mut app.settings, direction);
             app.commit_settings();
         }
-        Kind::Voice => open_picker(app, PickerTarget::Voice),
-        Kind::AudioDevice => open_picker(app, PickerTarget::AudioDevice),
+        Kind::Voice { .. } => open_picker(app, PickerTarget::Voice),
+        Kind::AudioDevice { .. } => open_picker(app, PickerTarget::AudioDevice),
         _ => {}
     }
 }
@@ -105,9 +105,9 @@ fn handle_toggle(app: &mut App) {
     }
     let list = fields(app.settings_ui.section);
     if let Some(field) = list.get(app.settings_ui.field)
-        && matches!(field.kind, Kind::Toggle)
+        && let Kind::Toggle { flip, .. } = &field.kind
     {
-        (field.toggle)(&mut app.settings);
+        flip(&mut app.settings);
         app.commit_settings();
     }
 }
@@ -133,11 +133,11 @@ pub(crate) fn footer_hint(app: &App) -> &'static str {
         section => {
             let list = fields(section);
             match list.get(app.settings_ui.field).map(|field| &field.kind) {
-                Some(Kind::Toggle) => "Space toggle",
+                Some(Kind::Toggle { .. }) => "Space toggle",
                 Some(Kind::Spinner { .. }) => "←/→ change · Shift ±5",
                 Some(Kind::Segmented { .. }) => "←/→ choose",
-                Some(Kind::Text | Kind::Time) => "Enter edit",
-                Some(Kind::Voice | Kind::AudioDevice) => "Enter choose",
+                Some(Kind::Text { .. } | Kind::Time { .. }) => "Enter edit",
+                Some(Kind::Voice { .. } | Kind::AudioDevice { .. }) => "Enter choose",
                 Some(Kind::Button(_)) => "Enter run",
                 None => "",
             }
@@ -168,12 +168,12 @@ fn activate(app: &mut App) {
             let Some(field) = list.get(app.settings_ui.field) else {
                 return;
             };
-            match field.kind {
-                Kind::Text | Kind::Time => begin_edit(app, EditTarget::OptionField),
-                Kind::Voice => open_picker(app, PickerTarget::Voice),
-                Kind::AudioDevice => open_picker(app, PickerTarget::AudioDevice),
-                Kind::Toggle => handle_toggle(app),
-                Kind::Button(action) => run_action(app, action),
+            match &field.kind {
+                Kind::Text { .. } | Kind::Time { .. } => begin_edit(app, EditTarget::OptionField),
+                Kind::Voice { .. } => open_picker(app, PickerTarget::Voice),
+                Kind::AudioDevice { .. } => open_picker(app, PickerTarget::AudioDevice),
+                Kind::Toggle { .. } => handle_toggle(app),
+                Kind::Button(action) => run_action(app, *action),
                 _ => {}
             }
         }
@@ -209,8 +209,11 @@ fn begin_edit(app: &mut App, target: EditTarget) {
         EditTarget::OptionField => {
             let list = fields(app.settings_ui.section);
             list.get(app.settings_ui.field)
-                .map_or_else(String::new, |field| match (field.get)(&app.settings) {
-                    Value::Text(text) => text,
+                .map_or_else(String::new, |field| match &field.kind {
+                    Kind::Text { get, .. } | Kind::Time { get, .. } => match get(&app.settings) {
+                        Value::Text(text) => text,
+                        _ => String::new(),
+                    },
                     _ => String::new(),
                 })
         }
@@ -281,8 +284,13 @@ fn commit_edit(app: &mut App) {
         EditTarget::OptionField => {
             let list = fields(app.settings_ui.section);
             if let Some(field) = list.get(app.settings_ui.field) {
-                (field.set_text)(&mut app.settings, &text);
-                app.commit_settings();
+                match &field.kind {
+                    Kind::Time { set, .. } | Kind::Text { set, .. } => {
+                        set(&mut app.settings, &text);
+                        app.commit_settings();
+                    }
+                    _ => {}
+                }
             }
         }
         EditTarget::None => {}
