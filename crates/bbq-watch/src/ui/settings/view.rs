@@ -288,6 +288,8 @@ fn render_field(field: &Field, settings: &Settings, app: &App, selected: bool) -
             let editing = selected && app.settings_ui.editing;
             let display = if editing {
                 app.settings_ui.edit_display()
+            } else if text.trim().is_empty() {
+                placeholder(field.label).map_or_else(|| format!("{text} "), String::from)
             } else {
                 format!("{text} ")
             };
@@ -309,6 +311,17 @@ fn render_field(field: &Field, settings: &Settings, app: &App, selected: bool) -
         }
     }
     Line::from(spans)
+}
+
+/// Placeholder shown for an empty text field.
+fn placeholder(label: &str) -> Option<&'static str> {
+    match label {
+        "Want to eat at" => Some("— (HH:MM)"),
+        "Quiet hours" => Some("off (e.g. 23:00-07:00)"),
+        "Display name" => Some("uses the thermometer's name"),
+        "CSV directory" => Some("~/bbq-watch"),
+        _ => None,
+    }
 }
 
 fn draw_help(frame: &mut Frame, area: Rect, app: &App) {
