@@ -275,15 +275,15 @@ impl AlertEngine {
     }
 
     /// Acknowledge every active alert.
-    pub fn ack_all(&mut self, now: AppInstant, snapshot: &Snapshot) {
+    pub fn ack_all(&mut self, snapshot: &Snapshot) {
         let keys: Vec<AlertKey> = self.active.keys().copied().collect();
         for key in keys {
-            self.ack(key, now, snapshot);
+            self.ack(key, snapshot);
         }
     }
 
     /// Acknowledge one alert.
-    pub fn ack(&mut self, key: AlertKey, _now: AppInstant, snapshot: &Snapshot) {
+    pub fn ack(&mut self, key: AlertKey, snapshot: &Snapshot) {
         let temp = probe_temp(key.0, snapshot);
         if let Some(active) = self.active.get_mut(&key) {
             active.acked = true;
@@ -819,7 +819,7 @@ mod tests {
         let key = (Some(ProbeId::new(1).unwrap()), AlertKind::TargetReached);
         let mut snap = snapshot(vec![probe(1, 205.0, 203.0)]);
         assert_eq!(engine.evaluate(&snap, AppInstant::ZERO).deliveries.len(), 1);
-        engine.ack(key, AppInstant::from_secs_f64(10.0), &snap);
+        engine.ack(key, &snap);
         let mut deliveries = 0;
         for second in 11..=5000 {
             let now = AppInstant::from_secs_f64(f64::from(second));

@@ -348,7 +348,7 @@ impl App {
             tokio::select! {
                 maybe = input.next() => {
                     if let Some(Ok(event)) = maybe {
-                        self.on_input(event).await;
+                        self.on_input(event);
                     }
                 }
                 _ = ticker.tick() => self.on_tick().await,
@@ -706,11 +706,9 @@ impl App {
             })
             .collect();
         rows.sort_by(|a, b| {
-            a.priority.cmp(&b.priority).then_with(|| {
-                b.since
-                    .partial_cmp(&a.since)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
+            a.priority
+                .cmp(&b.priority)
+                .then_with(|| b.since.secs().total_cmp(&a.since.secs()))
         });
         let banner = rows.iter().find(|row| !row.acked).map(|row| Banner {
             text: shared.build_text(&row.key),
@@ -751,7 +749,7 @@ impl App {
 
     // ---- input ------------------------------------------------------------
 
-    async fn on_input(&mut self, event: CrosstermEvent) {
+    fn on_input(&mut self, event: CrosstermEvent) {
         let CrosstermEvent::Key(key) = event else {
             return;
         };
@@ -914,7 +912,7 @@ impl App {
                 if let Some(row) = self.alerts_view.rows.get(self.alarms_selected) {
                     let key = row.key;
                     let snapshot = self.snapshot();
-                    self.engine.ack(key, self.now, &snapshot);
+                    self.engine.ack(key, &snapshot);
                 }
             }
             KeyCode::Char('t') => self.notifier.test(),
@@ -986,7 +984,7 @@ impl App {
 
     fn ack_all(&mut self) {
         let snapshot = self.snapshot();
-        self.engine.ack_all(self.now, &snapshot);
+        self.engine.ack_all(&snapshot);
     }
 
     fn snooze_all(&mut self) {
@@ -1139,8 +1137,7 @@ mod tests {
         app.on_input(CrosstermEvent::Key(KeyEvent::new(
             code,
             ratatui::crossterm::event::KeyModifiers::NONE,
-        )))
-        .await;
+        )));
     }
 
     pub(super) async fn press_mod(
@@ -1148,8 +1145,7 @@ mod tests {
         code: KeyCode,
         modifiers: ratatui::crossterm::event::KeyModifiers,
     ) {
-        app.on_input(CrosstermEvent::Key(KeyEvent::new(code, modifiers)))
-            .await;
+        app.on_input(CrosstermEvent::Key(KeyEvent::new(code, modifiers)));
     }
 
     pub(super) async fn type_str(app: &mut App, text: &str) {
