@@ -57,6 +57,8 @@ pub(crate) struct SettingsUi {
     pub(crate) edit_cursor: usize,
     /// When a pre-filled value is being edited, the first typed key replaces it.
     edit_replace: bool,
+    /// Validation message shown while an edit is rejected.
+    pub(crate) edit_error: Option<String>,
     edit_target: EditTarget,
     /// Open probe form, if any.
     probe_form: Option<ProbeForm>,
@@ -80,13 +82,17 @@ impl SettingsUi {
             || self.confirm_delete.is_some()
     }
 
-    /// Maximum characters for the current edit target.
     fn edit_limit(&self) -> usize {
         match self.edit_target {
             EditTarget::ProbeLabel => 18,
             EditTarget::PresetName => 40,
             _ => 64,
         }
+    }
+
+    /// Clear any validation message.
+    pub(crate) fn clear_edit_error(&mut self) {
+        self.edit_error = None;
     }
 
     fn edit_len(&self) -> usize {

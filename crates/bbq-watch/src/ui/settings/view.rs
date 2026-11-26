@@ -312,6 +312,17 @@ fn render_field(field: &Field, settings: &Settings, app: &App, selected: bool) -
 }
 
 fn draw_help(frame: &mut Frame, area: Rect, app: &App) {
+    if let Some(error) = &app.settings_ui.edit_error {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!(" {error}"),
+                Style::default().fg(theme::RED),
+            )))
+            .style(theme::base()),
+            area,
+        );
+        return;
+    }
     let text = if app.settings_ui.probe_form.is_some() {
         String::from(
             " ↑/↓ field · ←/→ change · Shift ±5 · Space toggle · Enter edit/choose · Esc back ",

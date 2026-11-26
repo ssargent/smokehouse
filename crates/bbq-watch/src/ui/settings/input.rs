@@ -182,13 +182,17 @@ fn begin_edit(app: &mut App, target: EditTarget) {
             .map_or_else(String::new, |preset| preset.name.clone()),
         EditTarget::None => String::new(),
     };
+    app.settings_ui.clear_edit_error();
     app.settings_ui.set_edit_target(target);
     app.settings_ui.edit_start(buffer);
 }
 
 fn handle_edit(app: &mut App, key: KeyEvent) {
     match key.code {
-        KeyCode::Esc => app.settings_ui.edit_stop(),
+        KeyCode::Esc => {
+            app.settings_ui.clear_edit_error();
+            app.settings_ui.edit_stop();
+        }
         KeyCode::Enter => commit_edit(app),
         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.settings_ui.edit_clear();
@@ -207,7 +211,18 @@ fn handle_edit(app: &mut App, key: KeyEvent) {
 fn commit_edit(app: &mut App) {
     let text = app.settings_ui.edit_buffer.clone();
     let target = app.settings_ui.edit_target();
+    // Reject invalid values before closing, so the user can fix them.
+    if let EditTarget::OptionField = target {
+        let list = fields(app.settings_ui.section);
+        if let Some(field) = list.get(app.settings_ui.field)
+            && let Some(error) = validation_error(field, &text)
+        {
+            app.settings_ui.edit_error = Some(error);
+            return;
+        }
+    }
     app.settings_ui.editing = false;
+    app.settings_ui.clear_edit_error();
     app.settings_ui.set_edit_target(EditTarget::None);
     match target {
         EditTarget::ProbeLabel => {
@@ -222,18 +237,36 @@ fn commit_edit(app: &mut App) {
         EditTarget::OptionField => {
             let list = fields(app.settings_ui.section);
             if let Some(field) = list.get(app.settings_ui.field) {
-                if let Kind::Time = field.kind
-                    && !text.trim().is_empty()
-                    && parse_hhmm(&text).is_none()
-                {
-                    return;
-                }
                 (field.set_text)(&mut app.settings, &text);
                 app.commit_settings();
             }
         }
         EditTarget::None => {}
     }
+}
+
+/// A validation message for a text field's value, if it is not accepted.
+fn validation_error(field: &Field, text: &str) -> Option<String> {
+    if text.trim().is_empty() {
+        return None;
+    }
+    match field.label {
+        "Want to eat at" if parse_hhmm(text).is_none() => {
+            Some(String::from("Use HH:MM (e.g. 19:30)"))
+        }
+        "Quiet hours" if !valid_quiet_hours(text) => {
+            Some(String::from("Use HH:MM-HH:MM (e.g. 23:00-07:00)"))
+        }
+        _ => None,
+    }
+}
+
+/// Whether `window` is a valid `HH:MM-HH:MM` quiet-hours range.
+fn valid_quiet_hours(window: &str) -> bool {
+    let Some((start, end)) = window.trim().split_once('-') else {
+        return false;
+    };
+    parse_hhmm(start).is_some() && parse_hhmm(end).is_some()
 }
 
 // ---- probe form -----------------------------------------------------------
