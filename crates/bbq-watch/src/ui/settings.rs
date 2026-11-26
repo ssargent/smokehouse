@@ -45,6 +45,8 @@ pub(crate) struct SettingsUi {
     preset_edit: bool,
     /// Focused row of the preset editor.
     preset_row: usize,
+    /// Preset index awaiting a delete confirmation.
+    pub(crate) confirm_delete: Option<usize>,
 }
 
 impl Default for SettingsUi {
@@ -60,6 +62,7 @@ impl Default for SettingsUi {
             preset_index: 0,
             preset_edit: false,
             preset_row: 0,
+            confirm_delete: None,
         }
     }
 }
@@ -907,10 +910,12 @@ fn draw_preset_list(frame: &mut Frame, area: Rect, app: &App) {
             ))
         })
         .collect();
-    let hint = Line::from(Span::styled(
-        " ↑/↓ choose · Enter apply · e edit · n new · d delete · Esc close ",
-        Style::default().fg(theme::MUTED),
-    ));
+    let hint_text = if let Some(index) = app.settings_ui.confirm_delete {
+        delete_confirm_text(app, index)
+    } else {
+        String::from(" ↑/↓ choose · Enter apply · e edit · n new · d delete · Esc close ")
+    };
+    let hint = Line::from(Span::styled(hint_text, Style::default().fg(theme::MUTED)));
     let list = List::new(items)
         .block(theme::block(" Presets ").title_bottom(hint))
         .highlight_style(
@@ -921,6 +926,27 @@ fn draw_preset_list(frame: &mut Frame, area: Rect, app: &App) {
         .highlight_symbol("▶ ");
     let mut state = ListState::default().with_selected(Some(app.settings_ui.preset_index));
     frame.render_stateful_widget(list, popup, &mut state);
+}
+
+/// The confirmation prompt shown before deleting a preset.
+fn delete_confirm_text(app: &App, index: usize) -> String {
+    let Some(preset) = app.settings.presets.get(index) else {
+        return String::new();
+    };
+    let users: Vec<String> = app
+        .settings
+        .probes
+        .iter()
+        .enumerate()
+        .filter(|(_, probe)| probe.preset == preset.id)
+        .map(|(slot, _)| format!("P{}", slot + 1))
+        .collect();
+    let warning = if users.is_empty() {
+        String::new()
+    } else {
+        format!(" {} uses it and will become Custom.", users.join(", "))
+    };
+    format!(" Delete \"{}\"?{warning} y/n ", preset.name)
 }
 
 /// `203°F`, `225–275°F` for a pit preset, or `—` when the preset sets neither.
@@ -1156,27 +1182,18 @@ fn adjust_probe(app: &mut App, direction: i32, modifiers: KeyModifiers) {
     let delta = f64::from(direction) * step;
 
     if column == 2 {
-        let mut applied = false;
-        {
-            let Settings {
-                probes, presets, ..
-            } = &mut app.settings;
-            if let Some(probe) = probes.get_mut(row) {
-                let len = presets.len();
-                if len > 0 {
-                    let current = presets
-                        .iter()
-                        .position(|preset| preset.id == probe.preset)
-                        .unwrap_or(0);
-                    let index = step_index(current, len, direction);
-                    if let Some(preset) = presets.get(index) {
-                        preset.apply(probe);
-                        applied = true;
-                    }
-                }
-            }
-        }
-        if applied {
+        let len = app.settings.presets.len();
+        if len > 0 {
+            let current = app.settings.probes.get(row).map_or(0, |probe| {
+                app.settings
+                    .presets
+                    .iter()
+                    .position(|preset| preset.id == probe.preset)
+                    .unwrap_or(0)
+            });
+            let index = step_index(current, len, direction);
+            let id = app.settings.presets[index].id.clone();
+            app.settings.apply_preset(row, &id);
             app.commit_settings();
         }
         return;
@@ -1209,6 +1226,9 @@ fn adjust_probe(app: &mut App, direction: i32, modifiers: KeyModifiers) {
         _ => changed = false,
     }
     if changed {
+        if matches!(column, 3..=6) {
+            app.settings.mark_custom(row);
+        }
         app.commit_settings();
     }
 }
@@ -1364,12 +1384,29 @@ fn open_preset(app: &mut App) {
 
 /// A key press while the preset popup is open.
 fn handle_preset(app: &mut App, key: KeyEvent) {
-    if app.settings_ui.editing {
+    if app.settings_ui.confirm_delete.is_some() {
+        handle_delete_confirm(app, key);
+    } else if app.settings_ui.editing {
         handle_edit(app, key);
     } else if app.settings_ui.preset_edit {
         handle_preset_editor(app, key);
     } else {
         handle_preset_list(app, key);
+    }
+}
+
+fn handle_delete_confirm(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Char('y' | 'Y') => {
+            if let Some(index) = app.settings_ui.confirm_delete.take() {
+                app.settings.remove_preset(index);
+                let len = app.settings.presets.len();
+                app.settings_ui.preset_index = index.min(len.saturating_sub(1));
+                app.commit_settings();
+            }
+        }
+        KeyCode::Char('n' | 'N') | KeyCode::Esc => app.settings_ui.confirm_delete = None,
+        _ => {}
     }
 }
 
@@ -1398,21 +1435,16 @@ fn handle_preset_list(app: &mut App, key: KeyEvent) {
 fn apply_preset(app: &mut App) {
     let row = app.settings_ui.probe_row;
     let index = app.settings_ui.preset_index;
-    let applied = {
-        let Settings {
-            probes, presets, ..
-        } = &mut app.settings;
-        match (probes.get_mut(row), presets.get(index)) {
-            (Some(probe), Some(preset)) => {
-                preset.apply(probe);
-                true
-            }
-            _ => false,
-        }
+    let Some(id) = app
+        .settings
+        .presets
+        .get(index)
+        .map(|preset| preset.id.clone())
+    else {
+        return;
     };
-    if applied {
-        app.commit_settings();
-    }
+    app.settings.apply_preset(row, &id);
+    app.commit_settings();
     app.settings_ui.preset_popup = false;
 }
 
@@ -1478,6 +1510,7 @@ fn adjust_preset(app: &mut App, direction: i32, modifiers: KeyModifiers) {
         }
         _ => return,
     }
+    app.settings.sync_preset_followers(index);
     app.commit_settings();
 }
 
@@ -1503,8 +1536,9 @@ fn toggle_preset_pit(app: &mut App) {
     let index = app.settings_ui.preset_index;
     if let Some(preset) = app.settings.presets.get_mut(index) {
         preset.pit = !preset.pit;
-        app.commit_settings();
     }
+    app.settings.sync_preset_followers(index);
+    app.commit_settings();
 }
 
 fn new_preset(app: &mut App) {
@@ -1539,26 +1573,9 @@ fn new_preset(app: &mut App) {
 
 fn delete_preset(app: &mut App) {
     let index = app.settings_ui.preset_index;
-    if app.settings.presets.len() <= 1 {
-        return;
+    if index < app.settings.presets.len() {
+        app.settings_ui.confirm_delete = Some(index);
     }
-    let removed = app.settings.presets.remove(index);
-    let fallback = index.min(app.settings.presets.len() - 1);
-    let replacement = app
-        .settings
-        .presets
-        .get(fallback)
-        .map(|preset| preset.id.clone());
-    if let Some(replacement) = replacement {
-        for probe in &mut app.settings.probes {
-            if probe.preset == removed.id {
-                probe.preset.clone_from(&replacement);
-            }
-        }
-    }
-    app.settings_ui.preset_index = fallback;
-    app.settings_ui.preset_edit = false;
-    app.commit_settings();
 }
 
 /// Rename the highlighted preset, keeping its id and the probe references in step.
@@ -1602,6 +1619,7 @@ fn clear_alert_column(app: &mut App) {
             5 => probe.alert_high_c = None,
             _ => probe.pre_alert_c = None,
         }
+        app.settings.mark_custom(app.settings_ui.probe_row);
         app.commit_settings();
     }
 }

@@ -125,6 +125,23 @@ impl DeviceScreenUnits {
     }
 }
 
+/// Reserved id of the built-in Custom pseudo-preset.
+pub const CUSTOM_PRESET_ID: &str = "custom";
+/// Display name of the built-in Custom pseudo-preset.
+pub const CUSTOM_PRESET_NAME: &str = "Custom";
+
+/// The built-in Custom pseudo-preset: always available, never stored in
+/// `[[presets]]`, and never editable or deletable.
+#[must_use]
+pub fn custom_preset() -> &'static Preset {
+    static CUSTOM: std::sync::LazyLock<Preset> = std::sync::LazyLock::new(|| Preset {
+        id: String::from(CUSTOM_PRESET_ID),
+        name: String::from(CUSTOM_PRESET_NAME),
+        ..Preset::default()
+    });
+    &CUSTOM
+}
+
 /// Cook preset; choosing one sets the probe target (and pit range).
 ///
 /// Presets live in the config file (`[[presets]]`), so they can be edited and
@@ -222,11 +239,6 @@ fn default_presets() -> Vec<Preset> {
             range_f: Some([225.0, 275.0]),
             alert_low_f: Some(215.0),
             alert_high_f: Some(290.0),
-            ..Preset::default()
-        },
-        Preset {
-            id: String::from("custom"),
-            name: String::from("Custom"),
             ..Preset::default()
         },
     ]
@@ -590,9 +602,13 @@ impl Settings {
             .unwrap_or_else(|| default_probe(index))
     }
 
-    /// The preset with `id`, when the config defines it.
+    /// The preset with `id`, when the config defines it (including the
+    /// built-in Custom pseudo-preset).
     #[must_use]
     pub fn preset(&self, id: &str) -> Option<&Preset> {
+        if id == CUSTOM_PRESET_ID {
+            return Some(custom_preset());
+        }
         self.presets.iter().find(|preset| preset.id == id)
     }
 
@@ -613,15 +629,66 @@ impl Settings {
         self.preset(id).is_some_and(|preset| preset.pit)
     }
 
+    /// Apply a preset to a probe: copy its values and record that the probe
+    /// follows it. Custom leaves the values alone and only clears the link.
+    pub fn apply_preset(&mut self, index: usize, preset_id: &str) {
+        let Some(preset) = self.preset(preset_id).cloned() else {
+            return;
+        };
+        let Some(probe) = self.probes.get_mut(index) else {
+            return;
+        };
+        if preset_id == CUSTOM_PRESET_ID {
+            probe.preset = String::from(CUSTOM_PRESET_ID);
+        } else {
+            preset.apply(probe);
+        }
+    }
+
+    /// Update every probe that follows the preset at `index` to its values.
+    pub fn sync_preset_followers(&mut self, index: usize) {
+        let Some(preset) = self.presets.get(index).cloned() else {
+            return;
+        };
+        for probe in &mut self.probes {
+            if probe.preset == preset.id {
+                preset.apply(probe);
+            }
+        }
+    }
+
+    /// Mark a probe as hand-edited: it no longer follows a preset.
+    pub fn mark_custom(&mut self, index: usize) {
+        if let Some(probe) = self.probes.get_mut(index) {
+            probe.preset = String::from(CUSTOM_PRESET_ID);
+        }
+    }
+
+    /// Remove the preset at `index`. Probes that followed it become Custom,
+    /// keeping their values; they are never reassigned to another preset.
+    pub fn remove_preset(&mut self, index: usize) {
+        if index >= self.presets.len() {
+            return;
+        }
+        let removed = self.presets.remove(index);
+        for probe in &mut self.probes {
+            if probe.preset == removed.id {
+                probe.preset = String::from(CUSTOM_PRESET_ID);
+            }
+        }
+    }
+
     /// `base`, or `base_2`, `base_3`… when another preset already uses it.
     /// `ignore` is the index of the preset being renamed.
     #[must_use]
     pub fn unique_preset_id(&self, base: &str, ignore: Option<usize>) -> String {
         let taken = |candidate: &str| {
-            self.presets
-                .iter()
-                .enumerate()
-                .any(|(index, preset)| preset.id == candidate && Some(index) != ignore)
+            candidate == CUSTOM_PRESET_ID
+                || self
+                    .presets
+                    .iter()
+                    .enumerate()
+                    .any(|(index, preset)| preset.id == candidate && Some(index) != ignore)
         };
         if !taken(base) {
             return base.to_string();
@@ -794,6 +861,9 @@ pub fn load(path: &Path) -> Result<Settings, ConfigError> {
         return create_default(path);
     }
     let mut settings: Settings = toml::from_str(&text)?;
+    settings
+        .presets
+        .retain(|preset| preset.id != CUSTOM_PRESET_ID);
     if settings.presets.is_empty() {
         settings.presets = default_presets();
     }
@@ -907,7 +977,7 @@ mod tests {
         assert!(!settings.data.csv_enabled);
         assert_eq!(settings.alarms.repeat_s, 90);
         assert_eq!(settings.probes.len(), PROBE_COUNT);
-        assert_eq!(settings.presets.len(), 13);
+        assert_eq!(settings.presets.len(), 12);
     }
 
     #[test]
@@ -991,6 +1061,81 @@ mod tests {
         assert_eq!(settings.unique_preset_id("brisket", None), "brisket_2");
         // Renaming a preset may keep its own id.
         assert_eq!(settings.unique_preset_id("brisket", Some(0)), "brisket");
+    }
+
+    #[test]
+    fn applying_preset_links_probe_and_copies_values() {
+        let mut settings = Settings::default();
+        settings.apply_preset(0, "pork_pulled");
+        assert_eq!(settings.probes[0].preset, "pork_pulled");
+        let target_f = crate::model::celsius_to_fahrenheit(settings.probes[0].target_c.unwrap());
+        assert!((target_f - 195.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn editing_preset_updates_followers() {
+        let mut settings = Settings::default();
+        settings.apply_preset(0, "brisket");
+        settings.apply_preset(1, "brisket");
+        let index = settings
+            .presets
+            .iter()
+            .position(|preset| preset.id == "brisket")
+            .unwrap();
+        settings.presets[index].target_f = Some(208.0);
+        settings.sync_preset_followers(index);
+        for row in [0, 1] {
+            let target_f =
+                crate::model::celsius_to_fahrenheit(settings.probes[row].target_c.unwrap());
+            assert!((target_f - 208.0).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn hand_editing_probe_makes_it_custom() {
+        let mut settings = Settings::default();
+        settings.apply_preset(0, "brisket");
+        settings.mark_custom(0);
+        assert_eq!(settings.probes[0].preset, CUSTOM_PRESET_ID);
+        let index = settings
+            .presets
+            .iter()
+            .position(|preset| preset.id == "brisket")
+            .unwrap();
+        settings.presets[index].target_f = Some(208.0);
+        settings.sync_preset_followers(index);
+        let target_f = crate::model::celsius_to_fahrenheit(settings.probes[0].target_c.unwrap());
+        assert!((target_f - 203.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn deleting_preset_turns_followers_custom_keeping_values() {
+        let mut settings = Settings::default();
+        settings.apply_preset(0, "brisket");
+        let before = settings.probes[0].target_c;
+        let index = settings
+            .presets
+            .iter()
+            .position(|preset| preset.id == "brisket")
+            .unwrap();
+        settings.remove_preset(index);
+        assert_eq!(settings.probes[0].preset, CUSTOM_PRESET_ID);
+        assert_eq!(settings.probes[0].target_c, before);
+        assert!(settings.preset("brisket").is_none());
+        assert!(settings.preset(CUSTOM_PRESET_ID).is_some());
+    }
+
+    #[test]
+    fn custom_is_builtin_and_never_stored_or_reused() {
+        let settings = Settings::default();
+        assert!(
+            settings
+                .presets
+                .iter()
+                .all(|preset| preset.id != CUSTOM_PRESET_ID)
+        );
+        assert!(settings.preset(CUSTOM_PRESET_ID).is_some());
+        assert_ne!(settings.unique_preset_id("custom", None), CUSTOM_PRESET_ID);
     }
 
     #[test]
