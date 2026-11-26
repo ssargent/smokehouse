@@ -293,7 +293,12 @@ async fn run_worker(
                         priority: Priority::Urgent,
                     }),
                     Some(SpeechMsg::Item(item)) => {
-                        if item.priority == Priority::Urgent && current.is_some() {
+                        let duplicate = queue.contains(item.key)
+                            || current.is_some_and(|queued| queued.key == item.key);
+                        let preempt = item.priority == Priority::Urgent
+                            && !duplicate
+                            && current.is_some_and(|queued| queued.priority != Priority::Urgent);
+                        if preempt {
                             if let Some(handle) = abort_handle.take() {
                                 handle.abort();
                             }
@@ -677,6 +682,31 @@ mod tests {
                 .iter()
                 .any(|line| line == "abort:No probes are reading."),
             "normal item must be aborted: {:?}",
+            log.entries()
+        );
+    }
+
+    #[tokio::test]
+    async fn urgent_does_not_preempt_urgent() {
+        let shared = Arc::new(Mutex::new(ActiveAlerts::default()));
+        let (tx, log, _handle) = spawn_worker(SpeechSettings::default(), false, shared).await;
+        tx.send(SpeechMsg::Item(SpeechItem {
+            key: SpeechKey::Preview,
+            priority: Priority::Urgent,
+        }))
+        .await
+        .unwrap();
+        wait_for(&log, "start:This is the bbq-watch voice preview.").await;
+        tx.send(SpeechMsg::Item(SpeechItem {
+            key: SpeechKey::Test,
+            priority: Priority::Urgent,
+        }))
+        .await
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            !log.entries().iter().any(|line| line.starts_with("abort:")),
+            "urgent item must not pre-empt another urgent item: {:?}",
             log.entries()
         );
     }
