@@ -4,7 +4,7 @@ use super::*;
 
 impl App {
     pub(crate) async fn sync_alerts_view(&mut self, now: AppInstant, snapshot: &Snapshot) {
-        let serve_at = self.serve_wall.map(|wall| wall.format("%H:%M").to_string());
+        let serve_at = self.serve_wall.map(|wall| self.fmt_wall(wall));
         let mut shared = self.shared.lock().await;
         shared.sync(
             &self.engine,

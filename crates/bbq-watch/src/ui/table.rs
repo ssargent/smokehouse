@@ -32,7 +32,7 @@ fn draw_table(frame: &mut Frame, area: Rect, app: &App) {
         let time = AppInstant::from_secs_f64(last as f64 * step);
         let previous = AppInstant::from_secs_f64((last as f64 * step - step).max(0.0));
         let mut cells: Vec<Cell> = Vec::new();
-        cells.push(Cell::from(format!(" {} ", app.wall(time).format("%H:%M"))));
+        cells.push(Cell::from(format!(" {} ", app.fmt_time(time))));
         let mut deltas: Vec<Cell> = Vec::new();
         for probe in 0..PROBE_COUNT {
             let cfg = app.settings.probe(probe);

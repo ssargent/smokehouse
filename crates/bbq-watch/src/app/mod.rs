@@ -294,6 +294,36 @@ impl App {
         self.clock.wall(at)
     }
 
+    /// Format a simulated instant as a wall-clock time honouring the
+    /// 24-hour setting.
+    #[must_use]
+    pub(crate) fn fmt_time(&self, at: AppInstant) -> String {
+        self.fmt_wall(self.clock.wall(at))
+    }
+
+    /// Format a simulated instant as a wall-clock time with seconds.
+    #[must_use]
+    pub(crate) fn fmt_time_hms(&self, at: AppInstant) -> String {
+        let wall = self.clock.wall(at);
+        let format = if self.settings.display.clock_24h {
+            "%H:%M:%S"
+        } else {
+            "%I:%M:%S %p"
+        };
+        wall.format(format).to_string()
+    }
+
+    /// Format an already-resolved wall-clock time.
+    #[must_use]
+    pub(crate) fn fmt_wall(&self, wall: DateTime<Local>) -> String {
+        let format = if self.settings.display.clock_24h {
+            "%H:%M"
+        } else {
+            "%I:%M %p"
+        };
+        wall.format(format).to_string()
+    }
+
     /// Probe label from settings.
     #[must_use]
     pub(crate) fn probe_label(&self, index: usize) -> String {

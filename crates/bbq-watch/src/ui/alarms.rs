@@ -74,12 +74,12 @@ fn alert_row(row: &AlertRow, app: &App) -> Row<'static> {
     let since = format!(" {} ", app.wall(row.since).format("%H:%M:%S"));
     let spoken = row.last_spoken.map_or_else(
         || String::from(" —"),
-        |at| format!(" {}", app.wall(at).format("%H:%M:%S")),
+        |at| format!(" {}", app.fmt_time_hms(at)),
     );
     let status = if row.acked {
         String::from("acked")
     } else if let Some(until) = row.snoozed_until {
-        format!("snoozed until {}", app.wall(until).format("%H:%M"))
+        format!("snoozed until {}", app.fmt_time(until))
     } else {
         String::from("active")
     };
@@ -107,7 +107,7 @@ fn draw_cleared(frame: &mut Frame, area: Rect, app: &App) {
             Line::from(Span::styled(
                 format!(
                     " {} {}{} cleared",
-                    app.wall(*at).format("%H:%M"),
+                    app.fmt_time(*at),
                     probe,
                     key.kind.label()
                 ),

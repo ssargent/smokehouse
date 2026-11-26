@@ -494,12 +494,6 @@ fn display_fields() -> Vec<Field> {
                     clamp_step(s.display.refresh_ms as f64, d, 250.0, 5000.0, 250.0) as u64;
             },
         ),
-        text(
-            "Theme",
-            "Colour theme name.",
-            |s| Value::Text(s.display.theme.clone()),
-            |s, v| s.display.theme = v.to_string(),
-        ),
         toggle(
             "Show target lines",
             "Draw meat target lines on the chart.",
@@ -517,12 +511,6 @@ fn display_fields() -> Vec<Field> {
             "Show times as 24-hour rather than AM/PM.",
             |s| Value::Bool(s.display.clock_24h),
             |s| s.display.clock_24h = !s.display.clock_24h,
-        ),
-        toggle(
-            "Compact cards",
-            "Draw compact probe cards.",
-            |s| Value::Bool(s.display.compact_cards),
-            |s| s.display.compact_cards = !s.display.compact_cards,
         ),
     ]
 }

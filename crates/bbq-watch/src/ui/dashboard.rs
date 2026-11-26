@@ -138,7 +138,7 @@ fn draw_meat_card(frame: &mut Frame, area: Rect, app: &App, cfg: &ProbeConfig, s
         .map(|(seconds, adjusted)| {
             let at = AppInstant::from_secs_f64(app.now.secs() + seconds);
             let star = if adjusted { " *" } else { "" };
-            format!("≈ {}{star} ", app.wall(at).format("%H:%M"))
+            format!("≈ {}{star} ", app.fmt_time(at))
         })
         .unwrap_or_default();
     lines.push(spread(
@@ -411,7 +411,7 @@ fn draw_chart(frame: &mut Frame, area: Rect, app: &App) {
         .map(|step| {
             let minutes = x_max * f64::from(step) / 4.0;
             let at = AppInstant::from_secs_f64(start.secs() + minutes * 60.0);
-            Line::from(app.wall(at).format("%H:%M").to_string())
+            Line::from(app.fmt_time(at))
         })
         .collect();
     let mut y_labels: Vec<Line> = Vec::new();
@@ -430,7 +430,7 @@ fn draw_chart(frame: &mut Frame, area: Rect, app: &App) {
         None => format!(
             " Temperature °{} · since {} ",
             unit.symbol(),
-            app.wall(start).format("%H:%M")
+            app.fmt_time(start)
         ),
     };
 
@@ -518,11 +518,7 @@ fn draw_eta(frame: &mut Frame, area: Rect, app: &App) {
             stalled_probes.push(cfg.label.clone());
         }
         let at = AppInstant::from_secs_f64(app.now.secs() + seconds);
-        let clock = format!(
-            "{}{}",
-            app.wall(at).format("%H:%M"),
-            if adjusted { "*" } else { "" }
-        );
+        let clock = format!("{}{}", app.fmt_time(at), if adjusted { "*" } else { "" });
         lines.push(spread(
             vec![
                 Span::styled("● ", Style::default().fg(color)),
@@ -576,7 +572,7 @@ fn draw_eta(frame: &mut Frame, area: Rect, app: &App) {
                 || String::from("—"),
                 |seconds| {
                     let at = AppInstant::from_secs_f64(app.now.secs() + seconds);
-                    format!("≈ {}", app.wall(at).format("%H:%M"))
+                    format!("≈ {}", app.fmt_time(at))
                 }
             )
         ),
@@ -593,7 +589,7 @@ fn draw_eta(frame: &mut Frame, area: Rect, app: &App) {
             format_duration(Some(app.settings.cook.rest_min * 60.0)),
             app.serve_wall.map_or_else(
                 || String::from("—"),
-                |wall| format!("≈ {}", wall.format("%H:%M"))
+                |wall| format!("≈ {}", app.fmt_wall(wall))
             )
         ),
         serve_style,
@@ -663,7 +659,7 @@ fn draw_events(frame: &mut Frame, area: Rect, app: &App) {
     let mut lines: Vec<Line<'static>> = Vec::new();
     let height = area.height.saturating_sub(2) as usize;
     for event in app.events.iter().rev().take(height) {
-        lines.push(event_line(event));
+        lines.push(event_line(event, app));
     }
     frame.render_widget(
         Paragraph::new(lines)
@@ -673,7 +669,7 @@ fn draw_events(frame: &mut Frame, area: Rect, app: &App) {
     );
 }
 
-fn event_line(event: &Event) -> Line<'static> {
+fn event_line(event: &Event, app: &App) -> Line<'static> {
     let (icon, color) = match event.icon {
         EventIcon::Milestone => ("✓", theme::GREEN),
         EventIcon::Warning => ("⚠", theme::YELLOW),
@@ -682,7 +678,7 @@ fn event_line(event: &Event) -> Line<'static> {
     };
     Line::from(vec![
         Span::styled(
-            format!("{} ", event.wall.format("%H:%M")),
+            format!("{} ", app.fmt_wall(event.wall)),
             Style::default().fg(theme::MUTED),
         ),
         Span::styled(format!("{icon} "), Style::default().fg(color)),
