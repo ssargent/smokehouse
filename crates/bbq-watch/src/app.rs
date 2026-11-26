@@ -145,7 +145,6 @@ pub struct App {
     pub(crate) engine: AlertEngine,
     pub(crate) shared: Arc<Mutex<ActiveAlerts>>,
     pub(crate) alerts_view: AlertsView,
-    pub(crate) cleared_seen: usize,
     pub(crate) bell_pending: bool,
 
     pub(crate) events: Vec<Event>,
@@ -233,7 +232,6 @@ async fn build(
         engine,
         shared,
         alerts_view: AlertsView::default(),
-        cleared_seen: 0,
         bell_pending: false,
         events: Vec::new(),
         cook_started: false,
@@ -523,8 +521,11 @@ impl App {
         self.compute_summary(now);
 
         let snapshot = self.snapshot();
-        let deliveries = self.engine.evaluate(&snapshot, now);
-        for delivery in deliveries {
+        let evaluation = self.engine.evaluate(&snapshot, now);
+        for (key, _) in &evaluation.cleared {
+            new_events.push((EventIcon::Info, format!("{} cleared", kind_label(key.1))));
+        }
+        for delivery in evaluation.deliveries {
             if !matches!(
                 delivery.key.1,
                 AlertKind::StallStarted | AlertKind::StallEnded
@@ -545,7 +546,7 @@ impl App {
             self.log_event(icon, message);
         }
 
-        self.log_cleared(now);
+        self.alerts_view.cleared = self.engine.cleared_recent(now);
         self.sync_alerts_view(now, &snapshot).await;
 
         if self.logger.due(now) {
@@ -654,18 +655,6 @@ impl App {
             serve_late: self.serve_late,
             alert_on_stall: self.settings.alarms.alert_on_stall,
         }
-    }
-
-    fn log_cleared(&mut self, now: AppInstant) {
-        let cleared = self.engine.cleared_recent(now);
-        if cleared.len() > self.cleared_seen {
-            for (key, _) in &cleared[self.cleared_seen..] {
-                let message = format!("{} cleared", kind_label(key.1));
-                self.log_event(EventIcon::Info, message);
-            }
-            self.cleared_seen = cleared.len();
-        }
-        self.alerts_view.cleared = cleared;
     }
 
     async fn sync_alerts_view(&mut self, now: AppInstant, snapshot: &Snapshot) {

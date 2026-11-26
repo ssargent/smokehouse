@@ -134,6 +134,15 @@ pub struct Delivery {
     pub text_builder_input: TextInput,
 }
 
+/// What one evaluation produced: alerts to deliver and alerts that cleared.
+#[derive(Debug, Default)]
+pub struct Evaluation {
+    /// Alerts to deliver this pass.
+    pub deliveries: Vec<Delivery>,
+    /// Alerts that cleared during this pass.
+    pub cleared: Vec<(AlertKey, AppInstant)>,
+}
+
 /// A probe's current state as the engine sees it.
 #[derive(Clone, Debug)]
 pub struct ProbeSnapshot {
@@ -282,9 +291,10 @@ impl AlertEngine {
         }
     }
 
-    /// Feed a new snapshot; returns the deliveries for this evaluation.
-    pub fn evaluate(&mut self, snapshot: &Snapshot, now: AppInstant) -> Vec<Delivery> {
+    /// Feed a new snapshot; returns the deliveries and clears for this pass.
+    pub fn evaluate(&mut self, snapshot: &Snapshot, now: AppInstant) -> Evaluation {
         let mut deliveries = Vec::new();
+        let mut cleared = Vec::new();
         let margin = f_delta_to_c(2.0);
         let mut conditions: Vec<Condition> = Vec::new();
 
@@ -400,12 +410,18 @@ impl AlertEngine {
 
         let snoozed = self.snooze_until.is_some_and(|until| now < until);
         for condition in conditions {
-            if let Some(delivery) = self.apply(condition, now, snapshot, snoozed) {
+            if let Some(delivery) = self.apply(condition, now, snapshot, snoozed, &mut cleared) {
                 deliveries.push(delivery);
             }
         }
 
-        deliveries
+        self.cleared_recent
+            .retain(|(_, at)| now.since(*at) <= 3600.0);
+
+        Evaluation {
+            deliveries,
+            cleared,
+        }
     }
 
     fn apply(
@@ -414,12 +430,14 @@ impl AlertEngine {
         now: AppInstant,
         snapshot: &Snapshot,
         snoozed: bool,
+        cleared: &mut Vec<(AlertKey, AppInstant)>,
     ) -> Option<Delivery> {
         let key = condition.key;
 
         if condition.clear {
             if self.active.remove(&key).is_some() {
                 self.cleared_recent.push((key, now));
+                cleared.push((key, now));
             }
             return None;
         }
@@ -786,7 +804,7 @@ mod tests {
         for second in 0..=900 {
             let now = AppInstant::from_secs_f64(f64::from(second));
             let snap = snapshot(vec![probe(1, 205.0, 203.0)]);
-            for delivery in engine.evaluate(&snap, now) {
+            for delivery in engine.evaluate(&snap, now).deliveries {
                 if delivery.key == (Some(ProbeId::new(1).unwrap()), AlertKind::TargetReached) {
                     seen.push(second);
                 }
@@ -800,7 +818,7 @@ mod tests {
         let mut engine = AlertEngine::new(90, 2, 30);
         let key = (Some(ProbeId::new(1).unwrap()), AlertKind::TargetReached);
         let mut snap = snapshot(vec![probe(1, 205.0, 203.0)]);
-        assert_eq!(engine.evaluate(&snap, AppInstant::ZERO).len(), 1);
+        assert_eq!(engine.evaluate(&snap, AppInstant::ZERO).deliveries.len(), 1);
         engine.ack(key, AppInstant::from_secs_f64(10.0), &snap);
         let mut deliveries = 0;
         for second in 11..=5000 {
@@ -808,6 +826,7 @@ mod tests {
             snap.last_reading_at = Some(now);
             deliveries += engine
                 .evaluate(&snap, now)
+                .deliveries
                 .iter()
                 .filter(|delivery| delivery.key == key)
                 .count();
@@ -819,20 +838,30 @@ mod tests {
     fn dropping_below_target_clears() {
         let mut engine = AlertEngine::new(90, 2, 30);
         let snap_hot = snapshot(vec![probe(1, 205.0, 203.0)]);
-        assert_eq!(engine.evaluate(&snap_hot, AppInstant::ZERO).len(), 1);
+        assert_eq!(
+            engine
+                .evaluate(&snap_hot, AppInstant::ZERO)
+                .deliveries
+                .len(),
+            1
+        );
         let snap_cool = snapshot(vec![probe(1, 200.0, 203.0)]);
         let now = AppInstant::from_secs_f64(30.0);
-        assert!(engine.evaluate(&snap_cool, now).is_empty());
+        assert!(engine.evaluate(&snap_cool, now).deliveries.is_empty());
         assert!(engine.active().is_empty());
     }
 
     #[test]
     fn different_keys_are_independent() {
         let mut engine = AlertEngine::new(90, 2, 30);
-        let first = engine.evaluate(&snapshot(vec![probe(1, 205.0, 203.0)]), AppInstant::ZERO);
+        let first = engine
+            .evaluate(&snapshot(vec![probe(1, 205.0, 203.0)]), AppInstant::ZERO)
+            .deliveries;
         assert_eq!(first.len(), 1);
         let both = snapshot(vec![probe(1, 205.0, 203.0), probe(2, 210.0, 203.0)]);
-        let later = engine.evaluate(&both, AppInstant::from_secs_f64(10.0));
+        let later = engine
+            .evaluate(&both, AppInstant::from_secs_f64(10.0))
+            .deliveries;
         assert_eq!(later.len(), 1, "second probe's alert must not be held back");
     }
 
@@ -850,6 +879,7 @@ mod tests {
                     &snapshot(vec![reading.clone()]),
                     AppInstant::from_secs_f64(-1.0)
                 )
+                .deliveries
                 .is_empty()
         );
         let mut unplugged = reading;
@@ -857,7 +887,10 @@ mod tests {
         let mut fired = false;
         for second in 0..=60 {
             let now = AppInstant::from_secs_f64(f64::from(second));
-            for delivery in engine.evaluate(&snapshot(vec![unplugged.clone()]), now) {
+            for delivery in engine
+                .evaluate(&snapshot(vec![unplugged.clone()]), now)
+                .deliveries
+            {
                 if delivery.key.1 == AlertKind::ProbeUnplugged {
                     assert_eq!(second, 30);
                     fired = true;
@@ -865,5 +898,28 @@ mod tests {
             }
         }
         assert!(fired);
+    }
+
+    #[test]
+    fn cleared_alerts_reported_and_pruned() {
+        let mut engine = AlertEngine::new(90, 2, 30);
+        let key = (Some(ProbeId::new(1).unwrap()), AlertKind::TargetReached);
+        let hot = snapshot(vec![probe(1, 205.0, 203.0)]);
+        assert_eq!(engine.evaluate(&hot, AppInstant::ZERO).deliveries.len(), 1);
+        let cool = snapshot(vec![probe(1, 200.0, 203.0)]);
+        let cleared = engine
+            .evaluate(&cool, AppInstant::from_secs_f64(10.0))
+            .cleared;
+        assert_eq!(cleared, vec![(key, AppInstant::from_secs_f64(10.0))]);
+        // Well past an hour, the old clear is pruned from the recent list...
+        let later = AppInstant::from_secs_f64(4000.0);
+        let _ = engine.evaluate(&cool, later);
+        assert!(engine.cleared_recent(later).is_empty());
+        // ...but a fresh clear is still reported.
+        assert_eq!(engine.evaluate(&hot, later).deliveries.len(), 1);
+        let cleared = engine
+            .evaluate(&cool, AppInstant::from_secs_f64(4010.0))
+            .cleared;
+        assert_eq!(cleared.len(), 1, "new clears must still be reported");
     }
 }
