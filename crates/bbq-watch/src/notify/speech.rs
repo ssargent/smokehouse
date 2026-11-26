@@ -404,14 +404,27 @@ pub async fn list_voices() -> Vec<String> {
     {
         let text = String::from_utf8_lossy(&output.stdout);
         for line in text.lines() {
-            if let Some(name) = line.split_whitespace().next()
-                && !voices.iter().any(|voice| voice == name)
+            if let Some(name) = parse_voice_line(line)
+                && !voices.contains(&name)
             {
-                voices.push(name.to_string());
+                voices.push(name);
             }
         }
     }
     voices
+}
+
+/// Parse one `say -v '?'` line into a voice name: the text before `#`, minus
+/// its final whitespace-separated token (the locale), trimmed. Keeps names
+/// like `Bad News` intact.
+fn parse_voice_line(line: &str) -> Option<String> {
+    let (head, _comment) = line.split_once('#').unwrap_or((line, ""));
+    let mut parts: Vec<&str> = head.split_whitespace().collect();
+    if line.contains('#') {
+        parts.pop()?; // drop the locale token
+    }
+    let name = parts.join(" ");
+    (!name.is_empty()).then_some(name)
 }
 
 /// Audio output names from `say -a '?'`, with `Default` first.
@@ -708,6 +721,21 @@ mod tests {
             !log.entries().iter().any(|line| line.starts_with("abort:")),
             "urgent item must not pre-empt another urgent item: {:?}",
             log.entries()
+        );
+    }
+    #[test]
+    fn parses_multi_word_voice_names() {
+        assert_eq!(
+            parse_voice_line("Alex                en_US    # Most people recognize me."),
+            Some(String::from("Alex"))
+        );
+        assert_eq!(
+            parse_voice_line("Bad News              en_US    # A news reader."),
+            Some(String::from("Bad News"))
+        );
+        assert_eq!(
+            parse_voice_line("Zosia                 pl_PL    # Polish voice."),
+            Some(String::from("Zosia"))
         );
     }
 }
