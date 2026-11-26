@@ -14,7 +14,9 @@ use tokio::sync::{Mutex, mpsc};
 use crate::alerts::{
     ActiveAlerts, ActiveInfo, AlertEngine, AlertKey, AlertKind, Priority, ProbeSnapshot, Snapshot,
 };
-use crate::analysis::{EtaResult, ProbeHistory, StallTracker, StallTransition, compute_eta};
+use crate::analysis::{
+    EtaInput, EtaResult, ProbeHistory, StallTracker, StallTransition, compute_eta,
+};
 use crate::caffeinate::Caffeinate;
 use crate::cli::Cli;
 use crate::clock::{AppClock, AppInstant, Clock};
@@ -524,17 +526,21 @@ impl App {
                 probe.reached_range_min = true;
                 new_events.push((EventIcon::Milestone, String::from("Pit reached range")));
             }
-            probe.eta = Some(compute_eta(
-                cfg.target_c.unwrap_or(0.0),
-                probe.temp_c,
-                rate,
-                probe.stalled,
-                probe.stall.started_at(),
-                now,
-                probe.wrapped_at,
-                &probe.history,
-                &cook,
-            ));
+            probe.eta = cfg.target_c.map(|target_c| {
+                compute_eta(
+                    &EtaInput {
+                        target_c,
+                        current_c: probe.temp_c,
+                        rate_c_h: rate,
+                        stalled: probe.stalled,
+                        stall_started_at: probe.stall.started_at(),
+                        wrapped_at: probe.wrapped_at,
+                        history: &probe.history,
+                    },
+                    now,
+                    &cook,
+                )
+            });
         }
 
         self.detect_lid(now, &mut new_events);

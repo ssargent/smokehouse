@@ -305,23 +305,32 @@ impl EtaResult {
     }
 }
 
+/// Inputs for a finish-time estimate.
+pub struct EtaInput<'a> {
+    /// Probe target in °C.
+    pub target_c: f32,
+    /// Current temperature in °C.
+    pub current_c: Option<f32>,
+    /// Recent rate in °C/h.
+    pub rate_c_h: Option<f32>,
+    /// Whether the probe is stalled.
+    pub stalled: bool,
+    /// When the stall began.
+    pub stall_started_at: Option<AppInstant>,
+    /// When the probe was last wrapped.
+    pub wrapped_at: Option<AppInstant>,
+    /// The probe's history.
+    pub history: &'a ProbeHistory,
+}
+
 /// Compute a meat probe's ETA.
-#[allow(clippy::too_many_arguments)]
 #[must_use]
-pub fn compute_eta(
-    target_c: f32,
-    current_c: Option<f32>,
-    rate_c_h: Option<f32>,
-    stalled: bool,
-    stall_started_at: Option<AppInstant>,
-    now: AppInstant,
-    wrapped_at: Option<AppInstant>,
-    history: &ProbeHistory,
-    cook: &CookSettings,
-) -> EtaResult {
-    let Some(current) = current_c else {
+pub fn compute_eta(input: &EtaInput<'_>, now: AppInstant, cook: &CookSettings) -> EtaResult {
+    let target_c = input.target_c;
+    let Some(current) = input.current_c else {
         return EtaResult::unknown();
     };
+
     if current >= target_c {
         return EtaResult {
             done: true,
@@ -331,15 +340,14 @@ pub fn compute_eta(
         };
     }
 
-    let linear = linear_seconds(target_c, current, rate_c_h);
-
-    let stall_aware = matches!(cook.eta_method, EtaMethod::StallAware) && stalled;
-    if stall_aware && let Some(started) = stall_started_at {
-        let wrapped = cook.wrapped_resets_stall && wrapped_at.is_some();
+    let linear = linear_seconds(target_c, current, input.rate_c_h);
+    let stall_aware = matches!(cook.eta_method, EtaMethod::StallAware) && input.stalled;
+    if stall_aware && let Some(started) = input.stall_started_at {
+        let wrapped = cook.wrapped_resets_stall && input.wrapped_at.is_some();
         let expected_min = if wrapped { 90.0 } else { 180.0 };
         let elapsed_min = now.since(started) / 60.0;
         let remaining_min = (expected_min - elapsed_min).max(15.0);
-        let post_rate_c = f_delta_to_c(post_rate_f(history, started));
+        let post_rate_c = f_delta_to_c(post_rate_f(input.history, started));
         let rise_seconds = f64::from((target_c - current) / post_rate_c) * 3600.0;
         return EtaResult {
             done: false,
@@ -464,14 +472,16 @@ mod tests {
         let target_c = fahrenheit_to_celsius(203.0);
         let current_c = fahrenheit_to_celsius(150.4);
         let result = compute_eta(
-            target_c,
-            Some(current_c),
-            Some(f_delta_to_c(1.0)),
-            true,
-            Some(started),
+            &EtaInput {
+                target_c,
+                current_c: Some(current_c),
+                rate_c_h: Some(f_delta_to_c(1.0)),
+                stalled: true,
+                stall_started_at: Some(started),
+                wrapped_at: None,
+                history: &history,
+            },
             now,
-            None,
-            &history,
             &cook,
         );
         assert!(result.stall_adjusted);
@@ -486,14 +496,16 @@ mod tests {
         let history = ProbeHistory::new();
         let now = AppInstant::from_secs_f64(60.0);
         let result = compute_eta(
-            fahrenheit_to_celsius(203.0),
-            Some(fahrenheit_to_celsius(205.0)),
-            Some(1.0),
-            false,
-            None,
+            &EtaInput {
+                target_c: fahrenheit_to_celsius(203.0),
+                current_c: Some(fahrenheit_to_celsius(205.0)),
+                rate_c_h: Some(1.0),
+                stalled: false,
+                stall_started_at: None,
+                wrapped_at: None,
+                history: &history,
+            },
             now,
-            None,
-            &history,
             &cook,
         );
         assert!(result.done);
