@@ -28,6 +28,10 @@ use crate::ui::{self, Tab};
 const MIN_REFRESH_MS: u64 = 250;
 /// Simulated minutes a pit drop must persist to count as "lid open".
 const LID_WINDOW_MIN: f64 = 3.0;
+/// Minimum seconds between settings writes while keys repeat.
+const SAVE_THROTTLE_SECS: f64 = 0.3;
+/// Seconds the "Saved" / "Couldn't save" footer indicator stays visible.
+const SAVE_STATUS_SECS: f64 = 2.0;
 
 /// Connection state of the thermometer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,6 +91,14 @@ pub(crate) struct Banner {
     pub(crate) priority: Priority,
 }
 
+/// Result of the most recent settings write, shown briefly in the footer.
+#[derive(Clone, Debug)]
+pub(crate) struct SaveStatus {
+    pub(crate) ok: bool,
+    pub(crate) message: String,
+    pub(crate) at: AppInstant,
+}
+
 /// One row of the Alarms tab.
 #[derive(Clone, Debug)]
 pub(crate) struct AlertRow {
@@ -144,6 +156,9 @@ pub struct App {
     pub(crate) log_scroll: usize,
     pub(crate) alarms_selected: usize,
     pub(crate) settings_ui: ui::settings::SettingsUi,
+    pub(crate) save_pending: bool,
+    pub(crate) last_save_at: Option<AppInstant>,
+    pub(crate) save_status: Option<SaveStatus>,
 
     pub(crate) all_done_seconds: Option<f64>,
     pub(crate) serve_wall: Option<DateTime<Local>>,
@@ -227,6 +242,9 @@ async fn build(
         log_scroll: 0,
         alarms_selected: 0,
         settings_ui: ui::settings::SettingsUi::default(),
+        save_pending: false,
+        last_save_at: None,
+        save_status: None,
         all_done_seconds: None,
         serve_wall: None,
         serve_late: false,
@@ -364,6 +382,7 @@ impl App {
 
     async fn cleanup(&mut self) {
         self.logger.flush();
+        self.flush_settings(true);
         self.caffeinate.stop().await;
         let _ = self.device_tx.send(DeviceCommand::Shutdown).await;
         self.notifier.shutdown();
@@ -382,7 +401,7 @@ impl App {
                 self.peripheral_id.clone_from(&id);
                 if self.settings.device.peripheral_id != id {
                     self.settings.device.peripheral_id.clone_from(&id);
-                    self.save_settings();
+                    self.commit_settings();
                 }
                 self.log_event(
                     EventIcon::Milestone,
@@ -538,6 +557,7 @@ impl App {
 
         self.maybe_speak_status(now);
         self.caffeinate.set(self.settings.data.keep_awake).await;
+        self.flush_settings(false);
     }
 
     fn detect_lid(&mut self, now: AppInstant, new_events: &mut Vec<(EventIcon, String)>) {
@@ -962,9 +982,9 @@ impl App {
 
     // ---- settings ---------------------------------------------------------
 
-    /// Persist settings and propagate them to the subsystems.
-    pub(crate) fn apply_settings(&mut self) {
-        self.save_settings();
+    /// Apply and persist a settings change: propagate to the subsystems and
+    /// write the config file (throttled so held keys do not thrash the disk).
+    pub(crate) fn commit_settings(&mut self) {
         self.engine.set_limits(
             self.settings.alarms.repeat_s,
             self.settings.alarms.bt_lost_after_min,
@@ -984,25 +1004,52 @@ impl App {
         let _ = self
             .device_tx
             .try_send(DeviceCommand::SetDeviceUnits(units));
-        self.settings_ui.dirty = false;
+        self.save_pending = true;
+        self.flush_settings(false);
     }
 
-    fn save_settings(&mut self) {
-        if let Err(err) = config::save(&self.settings, &self.config_path) {
-            tracing::warn!("could not save settings: {err}");
-            self.push_error_event(&format!("Could not save settings: {err}"));
+    /// Write the config file when a change is pending and the throttle window
+    /// has elapsed (or `force` is set).
+    pub(crate) fn flush_settings(&mut self, force: bool) {
+        if !self.save_pending {
+            return;
         }
-    }
-
-    /// Discard unsaved settings by reloading from disk.
-    pub(crate) fn reload_settings(&mut self) {
-        match config::load(&self.config_path) {
-            Ok(settings) => {
-                self.settings = settings;
-                self.settings_ui.dirty = false;
+        let now = self.clock.now();
+        let throttle_elapsed = self
+            .last_save_at
+            .is_none_or(|prev| now.since(prev) >= SAVE_THROTTLE_SECS);
+        if !force && !throttle_elapsed {
+            return;
+        }
+        self.last_save_at = Some(now);
+        self.save_pending = false;
+        match config::save(&self.settings, &self.config_path) {
+            Ok(()) => {
+                self.save_status = Some(SaveStatus {
+                    ok: true,
+                    message: String::from("Saved"),
+                    at: now,
+                });
             }
-            Err(err) => tracing::warn!("could not reload settings: {err}"),
+            Err(err) => {
+                let message = format!("Couldn't save: {err}");
+                tracing::warn!("{message}");
+                self.save_status = Some(SaveStatus {
+                    ok: false,
+                    message: message.clone(),
+                    at: now,
+                });
+                self.push_error_event(&message);
+            }
         }
+    }
+
+    /// The saved / failed indicator while it is still fresh.
+    #[must_use]
+    pub(crate) fn save_status(&self) -> Option<&SaveStatus> {
+        self.save_status
+            .as_ref()
+            .filter(|status| self.now.since(status.at) <= SAVE_STATUS_SECS)
     }
 }
 
@@ -1026,5 +1073,102 @@ fn alert_message(key: &AlertKey, snapshot: &Snapshot) -> String {
         AlertKind::StallEnded => format!("{label} stall ended"),
         AlertKind::BatteryLow => String::from("Battery low"),
         AlertKind::ServeLate => String::from("Serve time is late"),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    /// Build a demo-mode app on a throwaway config path.
+    pub(super) async fn harness() -> (App, PathBuf) {
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("bbq-watch-test-{}-{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        let settings = config::load(&path).unwrap();
+        let cli = Cli {
+            demo: true,
+            speed: 1.0,
+            config: Some(path.clone()),
+            no_speech: true,
+        };
+        let clock = AppClock::new(1.0);
+        let (app, _device_rx, _error_rx) = build(cli, settings, clock, path.clone()).await;
+        (app, path)
+    }
+
+    pub(super) async fn press(app: &mut App, code: KeyCode) {
+        app.on_input(CrosstermEvent::Key(KeyEvent::new(
+            code,
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        )))
+        .await;
+    }
+
+    pub(super) async fn press_mod(
+        app: &mut App,
+        code: KeyCode,
+        modifiers: ratatui::crossterm::event::KeyModifiers,
+    ) {
+        app.on_input(CrosstermEvent::Key(KeyEvent::new(code, modifiers)))
+            .await;
+    }
+
+    pub(super) async fn type_str(app: &mut App, text: &str) {
+        for character in text.chars() {
+            press(app, KeyCode::Char(character)).await;
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn render(app: &App) -> String {
+        let backend = TestBackend::new(132, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| ui::draw(frame, app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let mut out = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                out.push_str(buffer[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    fn cleanup(path: &std::path::Path) {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::remove_dir_all(parent);
+        }
+    }
+
+    #[tokio::test]
+    async fn esc_never_discards_settings() {
+        let (mut app, path) = harness().await;
+        press(&mut app, KeyCode::Char('5')).await;
+        press(&mut app, KeyCode::Enter).await;
+        press_mod(
+            &mut app,
+            KeyCode::Char('u'),
+            ratatui::crossterm::event::KeyModifiers::CONTROL,
+        )
+        .await;
+        type_str(&mut app, "Pork Shoulder").await;
+        press(&mut app, KeyCode::Enter).await;
+        for _ in 0..3 {
+            press(&mut app, KeyCode::Esc).await;
+        }
+        assert_eq!(app.settings.probes[0].label, "Pork Shoulder");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("Pork Shoulder"), "config not saved:\n{text}");
+        cleanup(&path);
     }
 }

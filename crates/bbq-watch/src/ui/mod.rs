@@ -243,20 +243,39 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
         Paragraph::new(Line::from(footer_hints(app))).style(theme::base()),
         columns[0],
     );
-    let right = if app.demo {
-        format!("demo ×{} ", app.cli.speed)
-    } else {
-        app.logger.file_name().map_or_else(
-            || String::from("logging off "),
-            |name| format!("logging → {name} "),
-        )
-    };
+    let (text, style) = footer_right(app);
     frame.render_widget(
-        Paragraph::new(Span::styled(right, Style::default().fg(theme::MUTED)))
+        Paragraph::new(Span::styled(text, style))
             .style(theme::base())
             .alignment(Alignment::Right),
         columns[1],
     );
+}
+
+/// Right-hand footer text: the settings-save indicator, else demo/log info.
+fn footer_right(app: &App) -> (String, Style) {
+    if let Some(status) = app.save_status() {
+        let (mark, color) = if status.ok {
+            ("✓", theme::GREEN)
+        } else {
+            ("✗", theme::RED)
+        };
+        return (
+            format!("{mark} {} ", status.message),
+            Style::default().fg(color),
+        );
+    }
+    if app.demo {
+        return (
+            format!("demo ×{} ", app.cli.speed),
+            Style::default().fg(theme::MUTED),
+        );
+    }
+    let text = app.logger.file_name().map_or_else(
+        || String::from("logging off "),
+        |name| format!("logging → {name} "),
+    );
+    (text, Style::default().fg(theme::MUTED))
 }
 
 fn chip(key: &str) -> Span<'static> {
@@ -300,12 +319,7 @@ fn footer_hints(app: &App) -> Vec<Span<'static>> {
             spans
         }
         Tab::Log => hint("↑/↓", "scroll"),
-        Tab::Settings => {
-            let mut spans = hint("Tab", "section");
-            spans.extend(hint("s", "save"));
-            spans.extend(hint("Esc", "discard"));
-            spans
-        }
+        Tab::Settings => hint("Tab", "section"),
     };
     spans.extend(hint("q", "quit"));
     spans.extend(hint("?", "help"));

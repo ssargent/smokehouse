@@ -45,7 +45,6 @@ pub(crate) struct SettingsUi {
     preset_edit: bool,
     /// Focused row of the preset editor.
     preset_row: usize,
-    pub(crate) dirty: bool,
 }
 
 impl Default for SettingsUi {
@@ -61,7 +60,6 @@ impl Default for SettingsUi {
             preset_index: 0,
             preset_edit: false,
             preset_row: 0,
-            dirty: false,
         }
     }
 }
@@ -693,13 +691,7 @@ fn draw_probes(frame: &mut Frame, area: Rect, app: &App) {
         .into_iter()
         .map(Cell::from),
     );
-    let mut block = theme::block(" Probes ");
-    if app.settings_ui.dirty {
-        block = block.title(Span::styled(
-            " ● unsaved changes ",
-            Style::default().fg(theme::YELLOW),
-        ));
-    }
+    let block = theme::block(" Probes ");
     let table = Table::new(rows, widths)
         .header(header)
         .block(block)
@@ -1047,8 +1039,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
     match key.code {
-        KeyCode::Esc => app.reload_settings(),
-        KeyCode::Char('s') => app.apply_settings(),
+        KeyCode::Esc => {}
         KeyCode::Tab => {
             app.settings_ui.section = (app.settings_ui.section + 1) % SECTIONS;
             app.settings_ui.field = 0;
@@ -1109,7 +1100,7 @@ fn step_field(app: &mut App, direction: i32) {
     match &field.kind {
         Kind::Segmented { .. } | Kind::Spinner { .. } => {
             (field.step)(&mut app.settings, direction);
-            app.settings_ui.dirty = true;
+            app.commit_settings();
         }
         Kind::Voice => step_voice(app, direction),
         Kind::AudioDevice => step_audio_device(app, direction),
@@ -1132,7 +1123,7 @@ fn step_voice(app: &mut App, direction: i32) {
     } else {
         options[next].clone()
     };
-    app.settings_ui.dirty = true;
+    app.commit_settings();
 }
 
 fn step_audio_device(app: &mut App, direction: i32) {
@@ -1150,7 +1141,7 @@ fn step_audio_device(app: &mut App, direction: i32) {
     } else {
         options[next].clone()
     };
-    app.settings_ui.dirty = true;
+    app.commit_settings();
 }
 
 fn adjust_probe(app: &mut App, direction: i32, modifiers: KeyModifiers) {
@@ -1186,7 +1177,7 @@ fn adjust_probe(app: &mut App, direction: i32, modifiers: KeyModifiers) {
             }
         }
         if applied {
-            app.settings_ui.dirty = true;
+            app.commit_settings();
         }
         return;
     }
@@ -1218,7 +1209,7 @@ fn adjust_probe(app: &mut App, direction: i32, modifiers: KeyModifiers) {
         _ => changed = false,
     }
     if changed {
-        app.settings_ui.dirty = true;
+        app.commit_settings();
     }
 }
 
@@ -1228,7 +1219,7 @@ fn handle_toggle(app: &mut App) {
             && let Some(probe) = app.settings.probes.get_mut(app.settings_ui.probe_row)
         {
             probe.show_on_chart = !probe.show_on_chart;
-            app.settings_ui.dirty = true;
+            app.commit_settings();
         }
         return;
     }
@@ -1237,7 +1228,7 @@ fn handle_toggle(app: &mut App) {
         && matches!(field.kind, Kind::Toggle)
     {
         (field.toggle)(&mut app.settings);
-        app.settings_ui.dirty = true;
+        app.commit_settings();
     }
 }
 
@@ -1249,7 +1240,7 @@ fn activate(app: &mut App) {
             7 => {
                 if let Some(probe) = app.settings.probes.get_mut(app.settings_ui.probe_row) {
                     probe.color = probe.color.next();
-                    app.settings_ui.dirty = true;
+                    app.commit_settings();
                 }
             }
             8 => handle_toggle(app),
@@ -1342,7 +1333,7 @@ fn commit_edit(app: &mut App) {
             && let Some(probe) = app.settings.probes.get_mut(app.settings_ui.probe_row)
         {
             probe.label = text;
-            app.settings_ui.dirty = true;
+            app.commit_settings();
         }
         return;
     }
@@ -1355,7 +1346,7 @@ fn commit_edit(app: &mut App) {
             return;
         }
         (field.set_text)(&mut app.settings, &text);
-        app.settings_ui.dirty = true;
+        app.commit_settings();
     }
 }
 
@@ -1421,7 +1412,7 @@ fn apply_preset(app: &mut App) {
         }
     };
     if applied {
-        app.settings_ui.dirty = true;
+        app.commit_settings();
     }
     app.settings_ui.preset_popup = false;
 }
@@ -1488,7 +1479,7 @@ fn adjust_preset(app: &mut App, direction: i32, modifiers: KeyModifiers) {
         }
         _ => return,
     }
-    app.settings_ui.dirty = true;
+    app.commit_settings();
 }
 
 /// Move a °F setting by `delta`, starting from `start` when it is unset.
@@ -1513,7 +1504,7 @@ fn toggle_preset_pit(app: &mut App) {
     let index = app.settings_ui.preset_index;
     if let Some(preset) = app.settings.presets.get_mut(index) {
         preset.pit = !preset.pit;
-        app.settings_ui.dirty = true;
+        app.commit_settings();
     }
 }
 
@@ -1544,7 +1535,7 @@ fn new_preset(app: &mut App) {
     app.settings_ui.preset_row = 0;
     app.settings_ui.edit_buffer.clear();
     app.settings_ui.editing = true;
-    app.settings_ui.dirty = true;
+    app.commit_settings();
 }
 
 fn delete_preset(app: &mut App) {
@@ -1568,7 +1559,7 @@ fn delete_preset(app: &mut App) {
     }
     app.settings_ui.preset_index = fallback;
     app.settings_ui.preset_edit = false;
-    app.settings_ui.dirty = true;
+    app.commit_settings();
 }
 
 /// Rename the highlighted preset, keeping its id and the probe references in step.
@@ -1597,7 +1588,7 @@ fn rename_preset(app: &mut App, text: String) {
             }
         }
     }
-    app.settings_ui.dirty = true;
+    app.commit_settings();
 }
 
 fn clear_alert_column(app: &mut App) {
@@ -1612,6 +1603,6 @@ fn clear_alert_column(app: &mut App) {
             5 => probe.alert_high_c = None,
             _ => probe.pre_alert_c = None,
         }
-        app.settings_ui.dirty = true;
+        app.commit_settings();
     }
 }
