@@ -656,10 +656,7 @@ fn wrap_delta(app: &App, index: usize) -> Option<f64> {
         return None;
     }
     let started = app.probes[index].stall.started_at()?;
-    let elapsed_min = app.now.since(started) / 60.0;
-    let remaining_plain = (180.0 - elapsed_min).max(15.0);
-    let remaining_wrapped = (90.0 - elapsed_min).max(15.0);
-    Some((remaining_plain - remaining_wrapped) * 60.0)
+    Some(crate::analysis::wrap_savings(started, app.now))
 }
 
 fn draw_events(frame: &mut Frame, area: Rect, app: &App) {

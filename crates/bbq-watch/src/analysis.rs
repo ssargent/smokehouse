@@ -14,6 +14,12 @@ const MAX_AGE_S: f64 = 24.0 * 3600.0;
 const MIN_SAMPLES: usize = 10;
 /// Minimum span needed for a regression.
 const MIN_SPAN_S: f64 = 5.0 * 60.0;
+/// Expected stall length in minutes without a wrap.
+const STALL_PLAIN_MIN: f64 = 180.0;
+/// Expected stall length in minutes after wrapping.
+const STALL_WRAPPED_MIN: f64 = 90.0;
+/// Floor for the remaining stall, so the model never predicts instant recovery.
+const STALL_FLOOR_MIN: f64 = 15.0;
 
 /// Per-probe history of `(instant, temperature)`, downsampled to one sample per
 /// 10 simulated seconds and capped at 24 hours.
@@ -344,9 +350,13 @@ pub fn compute_eta(input: &EtaInput<'_>, now: AppInstant, cook: &CookSettings) -
     let stall_aware = matches!(cook.eta_method, EtaMethod::StallAware) && input.stalled;
     if stall_aware && let Some(started) = input.stall_started_at {
         let wrapped = cook.wrapped_resets_stall && input.wrapped_at.is_some();
-        let expected_min = if wrapped { 90.0 } else { 180.0 };
+        let expected_min = if wrapped {
+            STALL_WRAPPED_MIN
+        } else {
+            STALL_PLAIN_MIN
+        };
         let elapsed_min = now.since(started) / 60.0;
-        let remaining_min = (expected_min - elapsed_min).max(15.0);
+        let remaining_min = (expected_min - elapsed_min).max(STALL_FLOOR_MIN);
         let post_rate_c = f_delta_to_c(post_rate_f(input.history, started));
         let rise_seconds = f64::from((target_c - current) / post_rate_c) * 3600.0;
         return EtaResult {
@@ -363,6 +373,15 @@ pub fn compute_eta(input: &EtaInput<'_>, now: AppInstant, cook: &CookSettings) -
         stall_adjusted: false,
         linear_seconds: linear,
     }
+}
+
+/// Seconds saved by wrapping now, given the stall started at `started`.
+#[must_use]
+pub fn wrap_savings(started: AppInstant, now: AppInstant) -> f64 {
+    let elapsed_min = now.since(started) / 60.0;
+    let plain = (STALL_PLAIN_MIN - elapsed_min).max(STALL_FLOOR_MIN);
+    let wrapped = (STALL_WRAPPED_MIN - elapsed_min).max(STALL_FLOOR_MIN);
+    (plain - wrapped) * 60.0
 }
 
 /// Straight-line ETA in seconds, or `None` when the rate is too small.
