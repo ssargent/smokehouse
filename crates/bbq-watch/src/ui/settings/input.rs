@@ -14,7 +14,9 @@ use crate::model::PROBE_COUNT;
 
 /// Handle a key press on the Settings tab.
 pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
-    if app.settings_ui.confirm_delete.is_some() {
+    if app.settings_ui.confirm_forget {
+        handle_forget_confirm(app, key);
+    } else if app.settings_ui.confirm_delete.is_some() {
         handle_confirm(app, key);
     } else if app.settings_ui.editing {
         handle_edit(app, key);
@@ -185,9 +187,18 @@ fn run_action(app: &mut App, action: Action) {
         Action::Scan => {
             let _ = app.device_tx.try_send(DeviceCommand::Rescan);
         }
-        Action::Forget => {
+        Action::Forget => app.settings_ui.confirm_forget = true,
+    }
+}
+
+fn handle_forget_confirm(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Char('y' | 'Y') => {
             let _ = app.device_tx.try_send(DeviceCommand::Forget);
+            app.settings_ui.confirm_forget = false;
         }
+        KeyCode::Char('n' | 'N') | KeyCode::Esc => app.settings_ui.confirm_forget = false,
+        _ => {}
     }
 }
 

@@ -27,7 +27,9 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
     draw_pane(frame, cols[1], app);
     draw_help(frame, rows[1], app);
 
-    if app.settings_ui.confirm_delete.is_some() {
+    if app.settings_ui.confirm_forget {
+        draw_forget_confirm(frame, area, app);
+    } else if app.settings_ui.confirm_delete.is_some() {
         draw_confirm(frame, area, app);
     } else if app.settings_ui.picker.is_some() {
         draw_picker(frame, area, app);
@@ -195,6 +197,13 @@ fn draw_fields(frame: &mut Frame, area: Rect, app: &App, section: usize) {
     let block = theme::block(pane_title(section));
     let inner = block.inner(area);
     frame.render_widget(block, area);
+    let list_area = if section == 6 {
+        let rows = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(inner);
+        frame.render_widget(device_status_line(app), rows[0]);
+        rows[1]
+    } else {
+        inner
+    };
 
     let items: Vec<ListItem> = list
         .iter()
@@ -211,9 +220,9 @@ fn draw_fields(frame: &mut Frame, area: Rect, app: &App, section: usize) {
     );
     let mut state = app.settings_ui.list_state.borrow_mut();
     state.select(Some(app.settings_ui.field));
-    frame.render_stateful_widget(widget, inner, &mut state);
+    frame.render_stateful_widget(widget, list_area, &mut state);
 
-    if list.len() > inner.height as usize {
+    if list.len() > list_area.height as usize {
         let mut scrollbar =
             ScrollbarState::new(list.len().saturating_sub(1)).position(app.settings_ui.field);
         frame.render_stateful_widget(
@@ -222,6 +231,43 @@ fn draw_fields(frame: &mut Frame, area: Rect, app: &App, section: usize) {
             &mut scrollbar,
         );
     }
+}
+
+/// Status line at the top of the Device & data pane.
+fn device_status_line(app: &App) -> Paragraph<'static> {
+    use crate::app::DeviceStatus;
+    let (status, color) = match app.device_status {
+        DeviceStatus::Connected => ("connected", theme::GREEN),
+        DeviceStatus::Scanning => ("scanning", theme::YELLOW),
+        DeviceStatus::Disconnected => ("disconnected", theme::RED),
+        DeviceStatus::Unavailable => ("unavailable", theme::RED),
+    };
+    let id = if app.peripheral_id.is_empty() {
+        String::from("—")
+    } else {
+        app.peripheral_id.clone()
+    };
+    let text = format!(" ● {}   {}   {status}", app.device_label(), id);
+    Paragraph::new(Line::from(Span::styled(text, Style::default().fg(color)))).style(theme::base())
+}
+
+/// Confirmation overlay for the Forget action.
+fn draw_forget_confirm(frame: &mut Frame, area: Rect, app: &App) {
+    let text = format!(
+        " Forget the saved thermometer \"{}\"? (y/n) ",
+        app.device_label()
+    );
+    let popup = centered(area, OVERLAY_WIDTH, 3);
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            text,
+            Style::default().fg(theme::FG),
+        )))
+        .block(theme::block(" Confirm "))
+        .style(theme::base()),
+        popup,
+    );
 }
 
 fn render_field(field: &Field, settings: &Settings, app: &App, selected: bool) -> Line<'static> {

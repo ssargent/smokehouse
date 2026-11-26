@@ -61,6 +61,8 @@ pub(crate) struct SettingsUi {
     /// Validation message shown while an edit is rejected.
     pub(crate) edit_error: Option<String>,
     edit_target: EditTarget,
+    /// Whether the Forget action is awaiting confirmation.
+    pub(crate) confirm_forget: bool,
     /// Open probe form, if any.
     probe_form: Option<ProbeForm>,
     /// Open preset form, if any.
@@ -81,6 +83,7 @@ impl SettingsUi {
             || self.preset_form.is_some()
             || self.picker.is_some()
             || self.confirm_delete.is_some()
+            || self.confirm_forget
     }
 
     fn edit_limit(&self) -> usize {
