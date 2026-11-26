@@ -617,12 +617,12 @@ impl App {
             self.clock.wall(serve_at)
         });
         self.serve_late = match (
-            &self.serve_wall,
+            self.serve_wall,
             parse_hhmm(&self.settings.cook.want_to_eat_at),
         ) {
             (Some(serve), Some((want_h, want_m))) => {
-                let serve_minutes = serve.hour() * 60 + serve.minute();
-                serve_minutes > want_h * 60 + want_m
+                let start = self.clock.wall(AppInstant::ZERO);
+                serve_deadline(start, want_h, want_m).is_some_and(|want| serve > want)
             }
             _ => false,
         };
@@ -1076,6 +1076,21 @@ fn alert_message(key: &AlertKey, snapshot: &Snapshot) -> String {
     }
 }
 
+/// The next local `hour:minute` at or after `start`, rolling past a day if that
+/// time has already passed — so a serve time after midnight still compares.
+fn serve_deadline(start: DateTime<Local>, hour: u32, minute: u32) -> Option<DateTime<Local>> {
+    let base = start
+        .with_hour(hour)?
+        .with_minute(minute)?
+        .with_second(0)?
+        .with_nanosecond(0)?;
+    Some(if base < start {
+        base + chrono::Duration::days(1)
+    } else {
+        base
+    })
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
@@ -1182,5 +1197,18 @@ mod tests {
         assert!(!app.settings.presets[0].pit);
         assert!(!app.settings.is_pit(0));
         cleanup(&path);
+    }
+
+    #[test]
+    fn serve_late_compares_full_datetimes() {
+        use chrono::TimeZone as _;
+        let start = Local.with_ymd_and_hms(2026, 1, 1, 12, 30, 0).unwrap();
+        let want = serve_deadline(start, 19, 30).unwrap();
+        // Serving at 00:40 the next day is later than a 19:30 want.
+        let serve = start + chrono::Duration::minutes(12 * 60 + 10);
+        assert!(serve > want);
+        // Serving at 17:30 the same day is not late.
+        let early = start + chrono::Duration::minutes(5 * 60);
+        assert!(early <= want);
     }
 }
