@@ -8,7 +8,6 @@ use std::time::Duration;
 
 use std::sync::Mutex;
 use tokio::sync::mpsc;
-use tokio::task::AbortHandle;
 
 use crate::alerts::{ActiveAlerts, AlertKey, Priority};
 use crate::clock::{AppClock, Clock};
@@ -265,12 +264,12 @@ async fn run_worker(
     rx: &mut mpsc::Receiver<SpeechMsg>,
 ) {
     let mut queue = SpeechQueue::new();
-    let (done_tx, mut done_rx) = mpsc::channel::<()>(8);
-    let mut current: Option<SpeechItem> = None;
-    let mut abort_handle: Option<AbortHandle> = None;
+    let mut speaking: Option<(SpeechItem, SpeechFuture)> = None;
+    let mut gap_until: Option<tokio::time::Instant> = None;
 
     loop {
-        if current.is_none()
+        if speaking.is_none()
+            && gap_until.is_none()
             && let Some(item) = next_item(&mut queue, shared, settings, force_off, clock)
         {
             let text = phrase(item, shared);
@@ -281,13 +280,7 @@ async fn run_worker(
                     .mark_spoken(&key, clock.now());
             }
             let future = speaker.start(&text, settings);
-            let done = done_tx.clone();
-            let task = tokio::spawn(async move {
-                let _ = future.await;
-                let _ = done.send(()).await;
-            });
-            abort_handle = Some(task.abort_handle());
-            current = Some(item);
+            speaking = Some((item, future));
         }
 
         tokio::select! {
@@ -301,29 +294,43 @@ async fn run_worker(
                     }),
                     Some(SpeechMsg::Item(item)) => {
                         let duplicate = queue.contains(item.key)
-                            || current.is_some_and(|queued| queued.key == item.key);
+                            || speaking.as_ref().is_some_and(|(cur, _)| cur.key == item.key);
                         let preempt = item.priority == Priority::Urgent
                             && !duplicate
-                            && current.is_some_and(|queued| queued.priority != Priority::Urgent);
+                            && speaking
+                                .as_ref()
+                                .is_some_and(|(cur, _)| cur.priority != Priority::Urgent);
                         if preempt {
-                            if let Some(handle) = abort_handle.take() {
-                                handle.abort();
-                            }
-                            while done_rx.try_recv().is_ok() {}
-                            if let Some(queued) = current.take() {
-                                queue.requeue_front(queued);
-                            }
+                            // Dropping the future stops `say` (kill_on_drop).
+                            speaking = None;
+                            gap_until = None;
                         }
                         queue.push(item);
                     }
                 }
             }
-            _ = done_rx.recv() => {
-                current = None;
-                abort_handle = None;
-                tokio::time::sleep(Duration::from_millis(800)).await;
+            _ = finished(&mut speaking) => {
+                speaking = None;
+                gap_until = Some(tokio::time::Instant::now() + Duration::from_millis(800));
             }
+            _ = gap_done(gap_until) => gap_until = None,
         }
+    }
+}
+
+/// Resolve when the currently-speaking item finishes, or pend when idle.
+async fn finished(speaking: &mut Option<(SpeechItem, SpeechFuture)>) -> Result<(), NotifyError> {
+    match speaking {
+        Some((_, future)) => future.await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Resolve when the inter-item gap elapses, or pend when there is no gap.
+async fn gap_done(deadline: Option<tokio::time::Instant>) {
+    match deadline {
+        Some(at) => tokio::time::sleep_until(at).await,
+        None => std::future::pending().await,
     }
 }
 
