@@ -1,5 +1,6 @@
 //! Application state, event loop and key handling.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -146,6 +147,7 @@ pub struct App {
 
     pub(crate) engine: AlertEngine,
     pub(crate) shared: Arc<Mutex<ActiveAlerts>>,
+    pub(crate) error_events: HashMap<String, AppInstant>,
     pub(crate) alerts_view: AlertsView,
     pub(crate) bell_pending: bool,
 
@@ -234,6 +236,7 @@ async fn build(
         engine,
         shared,
         alerts_view: AlertsView::default(),
+        error_events: HashMap::new(),
         bell_pending: false,
         events: Vec::new(),
         cook_started: false,
@@ -456,10 +459,19 @@ impl App {
         self.push_error_event(&message);
     }
 
+    /// Log an error at most once per five-minute window per message.
     fn push_error_event(&mut self, message: &str) {
-        if self.events.iter().any(|event| event.message == message) {
+        const WINDOW_S: f64 = 300.0;
+        let now = self.clock.now();
+        if self
+            .error_events
+            .get(message)
+            .is_some_and(|at| now.since(*at) < WINDOW_S)
+        {
             return;
         }
+        self.error_events.retain(|_, at| now.since(*at) < WINDOW_S);
+        self.error_events.insert(message.to_string(), now);
         tracing::warn!("{message}");
         self.log_event(EventIcon::Info, message.to_string());
     }
@@ -1225,6 +1237,20 @@ mod tests {
         .await;
         assert!(app.probes.iter().all(|probe| probe.temp_c.is_none()));
         assert_eq!(app.probes[0].last_seen_c, Some(50.0));
+        cleanup(&path);
+    }
+
+    #[tokio::test]
+    async fn repeated_errors_are_rate_limited() {
+        let (mut app, path) = harness().await;
+        app.push_error_event("boom");
+        app.push_error_event("boom");
+        assert_eq!(app.events.len(), 1);
+        // Pretend the five-minute window has passed.
+        app.error_events
+            .insert(String::from("boom"), AppInstant::from_secs_f64(-10_000.0));
+        app.push_error_event("boom");
+        assert_eq!(app.events.len(), 2);
         cleanup(&path);
     }
 }
