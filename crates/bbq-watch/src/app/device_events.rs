@@ -53,6 +53,11 @@ impl App {
                     self.cook_started = true;
                     self.log_event(EventIcon::Milestone, String::from("Cook started"));
                 }
+                let mut events = Vec::new();
+                self.update_probes(at, &self.settings.cook.clone(), &mut events);
+                for (icon, message) in events {
+                    self.log_event(icon, message);
+                }
             }
             DeviceEvent::Battery(percent) => self.battery = Some(percent),
             DeviceEvent::Rssi(value) => self.rssi = Some(value),

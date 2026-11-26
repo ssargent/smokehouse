@@ -398,10 +398,7 @@ impl App {
     async fn on_tick(&mut self) {
         let now = self.clock.now();
         self.now = now;
-        let cook = self.settings.cook.clone();
         let mut new_events: Vec<(EventIcon, String)> = Vec::new();
-
-        self.update_probes(now, &cook, &mut new_events);
 
         self.detect_lid(now, &mut new_events);
         self.compute_summary(now);
