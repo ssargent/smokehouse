@@ -210,7 +210,7 @@ async fn build(
         settings.data.sample_interval_s,
     );
     let mut caffeinate = Caffeinate::new();
-    caffeinate.set(settings.data.keep_awake).await;
+    caffeinate.set(settings.data.keep_awake);
 
     let app = App {
         settings,
@@ -383,7 +383,7 @@ impl App {
     async fn cleanup(&mut self) {
         self.logger.flush();
         self.flush_settings(true);
-        self.caffeinate.stop().await;
+        self.caffeinate.stop();
         let _ = self.device_tx.send(DeviceCommand::Shutdown).await;
         self.notifier.shutdown();
     }
@@ -565,7 +565,7 @@ impl App {
         }
 
         self.maybe_speak_status(now);
-        self.caffeinate.set(self.settings.data.keep_awake).await;
+        self.caffeinate.poll();
         self.flush_settings(false);
     }
 
@@ -1001,6 +1001,7 @@ impl App {
         let _ = self
             .device_tx
             .try_send(DeviceCommand::SetDeviceUnits(units));
+        self.caffeinate.set(self.settings.data.keep_awake);
         self.save_pending = true;
         self.flush_settings(false);
     }
