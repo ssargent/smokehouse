@@ -431,6 +431,7 @@ impl App {
 
         self.detect_lid(now, &mut new_events);
         self.compute_summary(now);
+        self.check_reading_watchdog(now);
 
         let snapshot = self.snapshot();
         let evaluation = self.engine.evaluate(&snapshot, now);

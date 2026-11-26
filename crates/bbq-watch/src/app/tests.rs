@@ -208,3 +208,14 @@ async fn preset_form_uses_user_units() {
     assert!((after - before - 1.8).abs() < 0.01, "expected a 1°C step");
     cleanup(&path);
 }
+
+#[tokio::test]
+async fn stale_readings_mark_disconnected() {
+    let (mut app, path) = harness().await;
+    app.demo = false;
+    app.device_status = DeviceStatus::Connected;
+    app.last_reading_at = Some(AppInstant::ZERO);
+    app.check_reading_watchdog(AppInstant::from_secs_f64(20.0));
+    assert_eq!(app.device_status, DeviceStatus::Disconnected);
+    cleanup(&path);
+}

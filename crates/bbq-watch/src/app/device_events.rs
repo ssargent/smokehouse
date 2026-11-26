@@ -84,4 +84,29 @@ impl App {
     }
 
     // ---- tick -------------------------------------------------------------
+
+    /// Treat a connected device with no fresh readings as dropped, so the UI
+    /// does not keep showing stale temperatures.
+    pub(crate) fn check_reading_watchdog(&mut self, now: AppInstant) {
+        if !self.connected() {
+            return;
+        }
+        let Some(at) = self.last_reading_at else {
+            return;
+        };
+        let stale_after = if self.demo {
+            f64::from(self.settings.data.sample_interval_s.max(10)) * 2.0 + 5.0
+        } else {
+            15.0
+        };
+        if now.since(at) > stale_after {
+            self.device_status = DeviceStatus::Disconnected;
+            for probe in &mut self.probes {
+                if let Some(temp) = probe.temp_c.take() {
+                    probe.last_seen_c = Some(temp);
+                }
+            }
+            self.log_event(EventIcon::Urgent, String::from("Disconnected: no data"));
+        }
+    }
 }
