@@ -491,7 +491,7 @@ fn draw_probe_form(frame: &mut Frame, area: Rect, app: &App) {
         .enumerate()
         .map(|(index, field)| {
             let selected = form.field == index;
-            probe_form_line(app, &cfg, *field, selected, unit)
+            probe_form_line(app, cfg, *field, selected, unit)
         })
         .collect();
     frame.render_widget(Paragraph::new(lines).style(theme::base()), inner);

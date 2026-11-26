@@ -333,7 +333,7 @@ impl App {
     /// Probe label from settings.
     #[must_use]
     pub(crate) fn probe_label(&self, index: usize) -> String {
-        self.settings.probe(index).label
+        self.settings.probe(index).label.clone()
     }
 
     /// Whether probe `index` is the pit probe.

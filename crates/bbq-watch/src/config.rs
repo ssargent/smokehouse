@@ -205,8 +205,14 @@ impl Preset {
     }
 }
 
-/// The presets a fresh config starts with.
+/// The presets a fresh config starts with (built once).
 fn default_presets() -> Vec<Preset> {
+    static PRESETS: std::sync::LazyLock<Vec<Preset>> =
+        std::sync::LazyLock::new(build_default_presets);
+    PRESETS.clone()
+}
+
+fn build_default_presets() -> Vec<Preset> {
     let meat = |id: &str, name: &str, target_f: f32| Preset {
         id: String::from(id),
         name: String::from(name),
@@ -500,7 +506,8 @@ pub struct Settings {
     /// Display section.
     pub display: DisplaySettings,
     /// The four probe definitions.
-    pub probes: Vec<ProbeConfig>,
+    #[serde(default, deserialize_with = "probes_from_vec")]
+    pub probes: [ProbeConfig; PROBE_COUNT],
     /// Cook presets, editable from the Settings tab.
     pub presets: Vec<Preset>,
     /// Alarms section.
@@ -531,13 +538,10 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// The probe config at `index`, clamped to the produced probe set.
+    /// The probe config at `index`, clamped to the fixed probe set.
     #[must_use]
-    pub fn probe(&self, index: usize) -> ProbeConfig {
-        self.probes
-            .get(index)
-            .cloned()
-            .unwrap_or_else(|| default_probe(index))
+    pub fn probe(&self, index: usize) -> &ProbeConfig {
+        &self.probes[index.min(PROBE_COUNT - 1)]
     }
 
     /// The preset with `id`, when the config defines it (including the
@@ -662,8 +666,24 @@ impl Settings {
     }
 }
 
-fn default_probes() -> Vec<ProbeConfig> {
-    (0..PROBE_COUNT).map(default_probe).collect()
+fn default_probes() -> [ProbeConfig; PROBE_COUNT] {
+    let presets = default_presets();
+    std::array::from_fn(|index| default_probe(index, &presets))
+}
+
+/// Deserialize `[[probes]]`, padding or trimming to exactly [`PROBE_COUNT`].
+fn probes_from_vec<'de, D>(deserializer: D) -> Result<[ProbeConfig; PROBE_COUNT], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let probes: Vec<ProbeConfig> = Vec::deserialize(deserializer)?;
+    let presets = default_presets();
+    Ok(std::array::from_fn(|index| {
+        probes
+            .get(index)
+            .cloned()
+            .unwrap_or_else(|| default_probe(index, &presets))
+    }))
 }
 
 /// Preset id a probe falls back to when the config omits its probes.
@@ -675,7 +695,7 @@ fn default_probe_preset(index: usize) -> &'static str {
     }
 }
 
-fn default_probe(index: usize) -> ProbeConfig {
+fn default_probe(index: usize, presets: &[Preset]) -> ProbeConfig {
     let (label, color) = match index {
         0 => ("Brisket Point", ProbeColor::Red),
         1 => ("Brisket Flat", ProbeColor::Orange),
@@ -688,10 +708,7 @@ fn default_probe(index: usize) -> ProbeConfig {
         ..ProbeConfig::default()
     };
     let preset = default_probe_preset(index);
-    if let Some(found) = default_presets()
-        .into_iter()
-        .find(|entry| entry.id == preset)
-    {
+    if let Some(found) = presets.iter().find(|entry| entry.id == preset) {
         found.apply(&mut probe);
     }
     probe
