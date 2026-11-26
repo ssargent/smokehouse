@@ -318,6 +318,7 @@ fn speech_fields() -> Vec<Field> {
         spinner(
             "Spoken status every",
             "Speak a status summary this often (0 = off).",
+            "min",
             |s| {
                 if s.speech.status_every_min == 0 {
                     Value::Text(String::from("off"))
