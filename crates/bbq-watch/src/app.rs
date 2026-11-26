@@ -71,6 +71,8 @@ pub(crate) struct Event {
 #[derive(Debug, Default)]
 pub(crate) struct ProbeState {
     pub(crate) temp_c: Option<f32>,
+    /// Last temperature seen before a disconnect, shown dimmed.
+    pub(crate) last_seen_c: Option<f32>,
     pub(crate) had_reading: bool,
     pub(crate) history: ProbeHistory,
     pub(crate) stall: StallTracker,
@@ -408,6 +410,11 @@ impl App {
             }
             DeviceEvent::Disconnected { reason } => {
                 self.device_status = DeviceStatus::Disconnected;
+                for probe in &mut self.probes {
+                    if let Some(temp) = probe.temp_c.take() {
+                        probe.last_seen_c = Some(temp);
+                    }
+                }
                 self.log_event(EventIcon::Urgent, format!("Disconnected: {reason}"));
             }
             DeviceEvent::Readings { at, temps_c } => {
@@ -424,8 +431,9 @@ impl App {
                 for (index, probe) in self.probes.iter_mut().enumerate() {
                     let temp = temps.get(index).copied().flatten();
                     probe.temp_c = temp;
-                    if temp.is_some() {
+                    if let Some(temp) = temp {
                         probe.had_reading = true;
+                        probe.last_seen_c = Some(temp);
                     }
                 }
                 if !self.cook_started {
@@ -1199,5 +1207,23 @@ mod tests {
         // Serving at 17:30 the same day is not late.
         let early = start + chrono::Duration::minutes(5 * 60);
         assert!(early <= want);
+    }
+
+    #[tokio::test]
+    async fn disconnect_clears_temps_and_keeps_last_seen() {
+        let (mut app, path) = harness().await;
+        app.on_device_event(DeviceEvent::Readings {
+            at: AppInstant::from_secs_f64(1.0),
+            temps_c: vec![Some(50.0), Some(60.0), None, None],
+        })
+        .await;
+        assert_eq!(app.probes[0].temp_c, Some(50.0));
+        app.on_device_event(DeviceEvent::Disconnected {
+            reason: String::from("test"),
+        })
+        .await;
+        assert!(app.probes.iter().all(|probe| probe.temp_c.is_none()));
+        assert_eq!(app.probes[0].last_seen_c, Some(50.0));
+        cleanup(&path);
     }
 }

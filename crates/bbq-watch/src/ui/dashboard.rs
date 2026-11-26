@@ -86,7 +86,10 @@ fn draw_meat_card(frame: &mut Frame, area: Rect, app: &App, cfg: &ProbeConfig, s
             unit.format_c(celsius),
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
-        None => (String::from("--"), Style::default().fg(theme::MUTED)),
+        None => state.last_seen_c.map_or_else(
+            || (String::from("--"), Style::default().fg(theme::MUTED)),
+            |celsius| (unit.format_c(celsius), Style::default().fg(theme::MUTED)),
+        ),
     };
     lines.push(spread(
         vec![Span::raw(" "), Span::styled(temp_text, temp_style)],
@@ -180,7 +183,10 @@ fn draw_pit_card(frame: &mut Frame, area: Rect, app: &App, cfg: &ProbeConfig, st
             unit.format_c(celsius),
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
-        None => (String::from("--"), Style::default().fg(theme::MUTED)),
+        None => state.last_seen_c.map_or_else(
+            || (String::from("--"), Style::default().fg(theme::MUTED)),
+            |celsius| (unit.format_c(celsius), Style::default().fg(theme::MUTED)),
+        ),
     };
     let steady = state.temp_c.map(|_| {
         let deviation = state
