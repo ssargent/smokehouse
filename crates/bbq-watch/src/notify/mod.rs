@@ -19,6 +19,18 @@ use crate::clock::AppClock;
 use crate::config::Settings;
 use speech::{SpeechHandle, SpeechItem, SpeechKey};
 
+/// A failure in one of the notifier's external commands.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct NotifyError(pub String);
+
+impl NotifyError {
+    /// Build from anything printable.
+    pub fn new(message: impl Into<String>) -> Self {
+        Self(message.into())
+    }
+}
+
 /// Messages the notifier task handles.
 #[derive(Debug)]
 pub enum NotifyMsg {
@@ -216,7 +228,7 @@ fn settings_errors(errors: &mpsc::Sender<String>) -> Arc<mpsc::Sender<String>> {
 
 fn spawn_logged<F>(name: &'static str, errors: Arc<mpsc::Sender<String>>, fut: F)
 where
-    F: Future<Output = Result<(), String>> + Send + 'static,
+    F: Future<Output = Result<(), NotifyError>> + Send + 'static,
 {
     tokio::spawn(async move {
         if let Err(err) = fut.await {
@@ -227,7 +239,7 @@ where
 }
 
 /// Run a program with null stdio and report whether it exited cleanly.
-pub(crate) async fn run_command(program: &str, args: &[&str]) -> Result<(), String> {
+pub(crate) async fn run_command(program: &str, args: &[&str]) -> Result<(), NotifyError> {
     let status = tokio::process::Command::new(program)
         .args(args)
         .stdin(Stdio::null())
@@ -235,11 +247,11 @@ pub(crate) async fn run_command(program: &str, args: &[&str]) -> Result<(), Stri
         .stderr(Stdio::null())
         .status()
         .await
-        .map_err(|err| format!("{program}: {err}"))?;
+        .map_err(|err| NotifyError::new(format!("{program}: {err}")))?;
     if status.success() {
         Ok(())
     } else {
-        Err(format!("{program} exited with {status}"))
+        Err(NotifyError::new(format!("{program} exited with {status}")))
     }
 }
 

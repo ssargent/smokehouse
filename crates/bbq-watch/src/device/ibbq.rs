@@ -3,6 +3,7 @@
 //! Everything lives under GATT service `0xFFF0`. The parse functions are pure
 //! and unit-tested; the BLE plumbing that uses them lives in [`super::ble`].
 
+use crate::model::PROBE_COUNT;
 use crate::model::Unit;
 
 /// GATT service.
@@ -50,19 +51,17 @@ pub fn uuid(short: u16) -> uuid::Uuid {
 /// Parse a realtime (`0xFFF4`) payload: one little-endian `u16` per probe,
 /// tenths of a degree Celsius. `None` means the probe is unplugged.
 #[must_use]
-pub fn parse_realtime(data: &[u8]) -> Vec<Option<f32>> {
-    data.as_chunks::<2>()
-        .0
-        .iter()
-        .map(|pair| {
-            let raw = i16::from_le_bytes([pair[0], pair[1]]);
-            if raw as u16 == UNPLUGGED {
-                None
-            } else {
-                Some(f32::from(raw) / 10.0)
-            }
-        })
-        .collect()
+pub fn parse_realtime(data: &[u8]) -> [Option<f32>; PROBE_COUNT] {
+    let mut temps = [None; PROBE_COUNT];
+    for (slot, pair) in temps.iter_mut().zip(data.as_chunks::<2>().0) {
+        let raw = i16::from_le_bytes([pair[0], pair[1]]);
+        *slot = if raw as u16 == UNPLUGGED {
+            None
+        } else {
+            Some(f32::from(raw) / 10.0)
+        };
+    }
+    temps
 }
 
 /// Parse a battery reply (`0xFFF1`): byte 0 = `0x24`, then current voltage and

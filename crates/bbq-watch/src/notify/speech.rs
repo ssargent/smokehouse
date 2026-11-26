@@ -12,9 +12,10 @@ use tokio::task::AbortHandle;
 use crate::alerts::{ActiveAlerts, AlertKey, Priority};
 use crate::clock::{AppClock, Clock};
 use crate::config::{Settings, SpeechSettings, in_quiet_hours};
+use crate::notify::NotifyError;
 
 /// The future returned by a [`Speaker`]; it owns whatever it needs to run.
-pub type SpeechFuture = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'static>>;
+pub type SpeechFuture = Pin<Box<dyn Future<Output = Result<(), NotifyError>> + Send + 'static>>;
 
 /// Identifies a spoken item, for dedupe and stale-drop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -112,15 +113,17 @@ impl Speaker for CommandSpeaker {
             .kill_on_drop(true);
         let program = self.program.clone();
         Box::pin(async move {
-            let mut child = cmd.spawn().map_err(|err| format!("{program}: {err}"))?;
+            let mut child = cmd
+                .spawn()
+                .map_err(|err| NotifyError::new(format!("{program}: {err}")))?;
             let status = child
                 .wait()
                 .await
-                .map_err(|err| format!("{program}: {err}"))?;
+                .map_err(|err| NotifyError::new(format!("{program}: {err}")))?;
             if status.success() {
                 Ok(())
             } else {
-                Err(format!("{program} exited with {status}"))
+                Err(NotifyError::new(format!("{program} exited with {status}")))
             }
         })
     }
@@ -509,7 +512,10 @@ mod tests {
                     text: text.clone(),
                     completed: Arc::clone(&completed),
                 };
-                let _permit = gate.acquire().await.map_err(|err| err.to_string())?;
+                let _permit = gate
+                    .acquire()
+                    .await
+                    .map_err(|err| NotifyError::new(err.to_string()))?;
                 completed.store(true, Ordering::SeqCst);
                 drop(guard);
                 log.push(format!("done:{text}"));

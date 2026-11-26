@@ -8,10 +8,18 @@ use tokio::sync::mpsc;
 
 use crate::clock::{AppClock, AppInstant};
 use crate::config::Settings;
-use crate::model::Unit;
+use crate::model::{PROBE_COUNT, Unit};
 
-/// Prefix used by the "no adapter / permission denied" error event.
-pub const BT_UNAVAILABLE: &str = "bluetooth unavailable";
+/// Failures raised inside the device task.
+#[derive(Debug, thiserror::Error)]
+pub enum DeviceError {
+    /// No usable Bluetooth adapter.
+    #[error("no Bluetooth adapter: {0}")]
+    Adapter(String),
+    /// A GATT write failed.
+    #[error("bluetooth write failed: {0}")]
+    Write(String),
+}
 
 /// Events produced by the device task. Index 0 of `Readings::temps_c` is P1.
 #[derive(Debug, Clone)]
@@ -35,8 +43,10 @@ pub enum DeviceEvent {
         /// Simulated instant the reading was taken.
         at: AppInstant,
         /// One entry per probe.
-        temps_c: Vec<Option<f32>>,
+        temps_c: [Option<f32>; PROBE_COUNT],
     },
+    /// Bluetooth is unusable (no adapter or permission denied).
+    Unavailable,
     /// Battery percentage.
     Battery(u8),
     /// Signal strength in dBm.
@@ -110,10 +120,4 @@ pub fn spawn_device(
         }
     });
     (event_rx, command_tx)
-}
-
-/// True when an error event means Bluetooth is unusable.
-#[must_use]
-pub fn is_bluetooth_unavailable(message: &str) -> bool {
-    message.starts_with(BT_UNAVAILABLE)
 }

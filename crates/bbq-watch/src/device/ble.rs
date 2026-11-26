@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 
 use crate::clock::{AppClock, Clock};
 use crate::device::ibbq;
-use crate::device::{BT_UNAVAILABLE, DeviceCommand, DeviceConfig, DeviceEvent};
+use crate::device::{DeviceCommand, DeviceConfig, DeviceError, DeviceEvent};
 
 /// How long a single scan runs before giving up.
 const SCAN_TIMEOUT: Duration = Duration::from_secs(30);
@@ -76,9 +76,8 @@ pub async fn run(
         let adapter = match get_adapter().await {
             Ok(adapter) => adapter,
             Err(err) => {
-                let _ = tx
-                    .send(DeviceEvent::Error(format!("{BT_UNAVAILABLE}: {err}")))
-                    .await;
+                tracing::warn!("{err}");
+                let _ = tx.send(DeviceEvent::Unavailable).await;
                 if matches!(
                     wait_cmd(Duration::from_secs(10), &mut cmd, &mut saved_id).await,
                     Wait::Shutdown
@@ -206,13 +205,18 @@ async fn wait_cmd(
 }
 
 /// First available Bluetooth adapter.
-async fn get_adapter() -> Result<Adapter, String> {
-    let manager = Manager::new().await.map_err(|err| err.to_string())?;
-    let adapters = manager.adapters().await.map_err(|err| err.to_string())?;
+async fn get_adapter() -> Result<Adapter, DeviceError> {
+    let manager = Manager::new()
+        .await
+        .map_err(|err| DeviceError::Adapter(err.to_string()))?;
+    let adapters = manager
+        .adapters()
+        .await
+        .map_err(|err| DeviceError::Adapter(err.to_string()))?;
     adapters
         .into_iter()
         .next()
-        .ok_or_else(|| String::from("no Bluetooth adapter"))
+        .ok_or_else(|| DeviceError::Adapter(String::from("none found")))
 }
 
 /// Scan for a matching thermometer, honouring commands while scanning.
@@ -445,7 +449,7 @@ async fn write_char(
     peripheral: &Peripheral,
     characteristic: &Characteristic,
     data: &[u8],
-) -> Result<(), String> {
+) -> Result<(), DeviceError> {
     let write_type = if characteristic.properties.contains(CharPropFlags::WRITE) {
         WriteType::WithResponse
     } else {
@@ -454,7 +458,7 @@ async fn write_char(
     peripheral
         .write(characteristic, data, write_type)
         .await
-        .map_err(|err| err.to_string())
+        .map_err(|err| DeviceError::Write(err.to_string()))
 }
 
 /// Compact a device id for display.

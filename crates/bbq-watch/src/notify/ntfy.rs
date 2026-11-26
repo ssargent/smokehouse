@@ -5,7 +5,12 @@ use std::time::Duration;
 use reqwest::Client;
 
 /// POST a message to `https://ntfy.sh/<topic>`.
-pub async fn push(client: &Client, topic: &str, message: &str, urgent: bool) -> Result<(), String> {
+pub async fn push(
+    client: &Client,
+    topic: &str,
+    message: &str,
+    urgent: bool,
+) -> Result<(), super::NotifyError> {
     let url = format!("https://ntfy.sh/{topic}");
     let priority = if urgent { "urgent" } else { "default" };
     let response = client
@@ -16,10 +21,13 @@ pub async fn push(client: &Client, topic: &str, message: &str, urgent: bool) -> 
         .body(message.to_string())
         .send()
         .await
-        .map_err(|err| err.to_string())?;
+        .map_err(|err| super::NotifyError::new(err.to_string()))?;
     if response.status().is_success() {
         Ok(())
     } else {
-        Err(format!("ntfy returned {}", response.status()))
+        Err(super::NotifyError::new(format!(
+            "ntfy returned {}",
+            response.status()
+        )))
     }
 }

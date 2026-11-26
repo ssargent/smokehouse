@@ -448,12 +448,11 @@ impl App {
             }
             DeviceEvent::Battery(percent) => self.battery = Some(percent),
             DeviceEvent::Rssi(value) => self.rssi = Some(value),
-            DeviceEvent::Error(message) => {
-                if device::is_bluetooth_unavailable(&message) {
-                    self.device_status = DeviceStatus::Unavailable;
-                }
-                self.push_error_event(&message);
+            DeviceEvent::Unavailable => {
+                self.device_status = DeviceStatus::Unavailable;
+                self.push_error_event("Bluetooth unavailable");
             }
+            DeviceEvent::Error(message) => self.push_error_event(&message),
         }
     }
 
@@ -1235,7 +1234,7 @@ mod tests {
         let (mut app, path) = harness().await;
         app.on_device_event(DeviceEvent::Readings {
             at: AppInstant::from_secs_f64(1.0),
-            temps_c: vec![Some(50.0), Some(60.0), None, None],
+            temps_c: [Some(50.0), Some(60.0), None, None],
         })
         .await;
         assert_eq!(app.probes[0].temp_c, Some(50.0));

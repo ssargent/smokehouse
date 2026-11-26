@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 
 use crate::clock::{AppClock, Clock};
 use crate::device::{DeviceCommand, DeviceConfig, DeviceEvent};
-use crate::model::fahrenheit_to_celsius;
+use crate::model::{PROBE_COUNT, fahrenheit_to_celsius};
 
 /// Deterministic pseudo-random source (xorshift64), so no `rand` dependency.
 struct Rng(u64);
@@ -83,12 +83,12 @@ impl DemoSim {
         }
     }
 
-    fn readings(&mut self, t_min: f64) -> Vec<Option<f32>> {
+    fn readings(&mut self, t_min: f64) -> [Option<f32>; PROBE_COUNT] {
         let pit = pit_f(t_min) as f32 + self.rng.uniform(1.6);
         let point = meat_f(t_min, 38.0, 152.2, 84.0, 400.0, 205.0) as f32 + self.rng.uniform(0.25);
         let flat = meat_f(t_min, 37.0, 151.9, 80.0, 420.0, 205.0) as f32 + self.rng.uniform(0.25);
         let butt = pork_butt_f(t_min) as f32 + self.rng.uniform(0.25);
-        vec![
+        [
             Some(tenths_c(point)),
             Some(tenths_c(flat)),
             Some(tenths_c(butt)),
