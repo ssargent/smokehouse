@@ -33,7 +33,7 @@ const OVERLAY_WIDTH: u16 = 62;
 
 /// Which field the text editor writes back to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-enum EditTarget {
+pub(crate) enum EditTarget {
     #[default]
     None,
     OptionField,
@@ -54,6 +54,9 @@ pub(crate) struct SettingsUi {
     pub(crate) preset_index: usize,
     pub(crate) editing: bool,
     pub(crate) edit_buffer: String,
+    pub(crate) edit_cursor: usize,
+    /// When a pre-filled value is being edited, the first typed key replaces it.
+    edit_replace: bool,
     edit_target: EditTarget,
     /// Open probe form, if any.
     probe_form: Option<ProbeForm>,
@@ -75,6 +78,133 @@ impl SettingsUi {
             || self.preset_form.is_some()
             || self.picker.is_some()
             || self.confirm_delete.is_some()
+    }
+
+    /// Maximum characters for the current edit target.
+    fn edit_limit(&self) -> usize {
+        match self.edit_target {
+            EditTarget::ProbeLabel => 18,
+            EditTarget::PresetName => 40,
+            _ => 64,
+        }
+    }
+
+    fn edit_len(&self) -> usize {
+        self.edit_buffer.chars().count()
+    }
+
+    /// Byte offset of the cursor.
+    fn cursor_byte(&self) -> usize {
+        self.edit_buffer
+            .char_indices()
+            .nth(self.edit_cursor)
+            .map_or(self.edit_buffer.len(), |(index, _)| index)
+    }
+
+    /// Start editing `text` with the cursor at the end.
+    pub(crate) fn edit_start(&mut self, text: String) {
+        self.edit_replace = !text.is_empty();
+        self.editing = true;
+        self.edit_cursor = text.chars().count();
+        self.edit_buffer = text;
+    }
+
+    /// Stop editing.
+    pub(crate) fn edit_stop(&mut self) {
+        self.editing = false;
+        self.edit_buffer.clear();
+        self.edit_cursor = 0;
+        self.edit_target = EditTarget::None;
+    }
+
+    /// Insert a character, replacing a pre-filled value on the first key.
+    pub(crate) fn edit_insert(&mut self, character: char) {
+        if self.edit_replace {
+            self.edit_replace = false;
+            self.edit_buffer.clear();
+            self.edit_cursor = 0;
+        }
+        if self.edit_len() >= self.edit_limit() {
+            return;
+        }
+        let byte = self.cursor_byte();
+        self.edit_buffer.insert(byte, character);
+        self.edit_cursor += 1;
+    }
+
+    /// Delete the character before the cursor.
+    pub(crate) fn edit_backspace(&mut self) {
+        if self.edit_cursor == 0 {
+            return;
+        }
+        let end = self.cursor_byte();
+        let start = self.edit_buffer[..end]
+            .char_indices()
+            .next_back()
+            .map_or(0, |(index, _)| index);
+        self.edit_buffer.replace_range(start..end, "");
+        self.edit_cursor -= 1;
+    }
+
+    /// Delete the character under the cursor.
+    pub(crate) fn edit_delete(&mut self) {
+        let start = self.cursor_byte();
+        if start >= self.edit_buffer.len() {
+            return;
+        }
+        let end = self.edit_buffer[start..]
+            .char_indices()
+            .nth(1)
+            .map_or(self.edit_buffer.len(), |(index, _)| start + index);
+        self.edit_buffer.replace_range(start..end, "");
+    }
+
+    /// Clear the buffer.
+    pub(crate) fn edit_clear(&mut self) {
+        self.edit_buffer.clear();
+        self.edit_cursor = 0;
+    }
+
+    /// Move the cursor by `delta` characters.
+    pub(crate) fn edit_move(&mut self, delta: i32) {
+        let len = self.edit_len() as i32;
+        self.edit_cursor = (self.edit_cursor as i32 + delta).clamp(0, len) as usize;
+    }
+
+    /// Put the cursor at the start.
+    pub(crate) fn edit_home(&mut self) {
+        self.edit_cursor = 0;
+    }
+
+    /// Put the cursor at the end.
+    pub(crate) fn edit_end(&mut self) {
+        self.edit_cursor = self.edit_len();
+    }
+
+    /// The buffer with a cursor marker and a `used/limit` counter.
+    #[must_use]
+    pub(crate) fn edit_display(&self) -> String {
+        let mut out = String::new();
+        for (index, character) in self.edit_buffer.chars().enumerate() {
+            if index == self.edit_cursor {
+                out.push('▏');
+            }
+            out.push(character);
+        }
+        if self.edit_cursor >= self.edit_len() {
+            out.push('▏');
+        }
+        format!("{out} {}/{}", self.edit_len(), self.edit_limit())
+    }
+
+    /// The current edit target.
+    pub(super) fn edit_target(&self) -> EditTarget {
+        self.edit_target
+    }
+
+    /// Set the edit target.
+    pub(super) fn set_edit_target(&mut self, target: EditTarget) {
+        self.edit_target = target;
     }
 }
 

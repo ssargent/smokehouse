@@ -287,7 +287,7 @@ fn render_field(field: &Field, settings: &Settings, app: &App, selected: bool) -
             };
             let editing = selected && app.settings_ui.editing;
             let display = if editing {
-                format!("{}▏", app.settings_ui.edit_buffer)
+                app.settings_ui.edit_display()
             } else {
                 format!("{text} ")
             };
@@ -483,7 +483,7 @@ fn probe_form_line(
     };
     let editing = selected && app.settings_ui.editing && field == ProbeField::Label;
     let value = if editing {
-        format!("{}▏", app.settings_ui.edit_buffer)
+        app.settings_ui.edit_display()
     } else {
         value
     };
@@ -571,7 +571,7 @@ fn preset_form_line(
         PresetField::Name => {
             let editing = selected && app.settings_ui.editing;
             let text = if editing {
-                format!("{}▏", app.settings_ui.edit_buffer)
+                app.settings_ui.edit_display()
             } else {
                 preset.name.clone()
             };

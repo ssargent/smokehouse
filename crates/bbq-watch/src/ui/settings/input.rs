@@ -182,44 +182,33 @@ fn begin_edit(app: &mut App, target: EditTarget) {
             .map_or_else(String::new, |preset| preset.name.clone()),
         EditTarget::None => String::new(),
     };
-    app.settings_ui.editing = true;
-    app.settings_ui.edit_buffer = buffer;
-    app.settings_ui.edit_target = target;
+    app.settings_ui.set_edit_target(target);
+    app.settings_ui.edit_start(buffer);
 }
 
 fn handle_edit(app: &mut App, key: KeyEvent) {
     match key.code {
-        KeyCode::Esc => {
-            app.settings_ui.editing = false;
-            app.settings_ui.edit_buffer.clear();
-            app.settings_ui.edit_target = EditTarget::None;
-        }
+        KeyCode::Esc => app.settings_ui.edit_stop(),
         KeyCode::Enter => commit_edit(app),
         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.settings_ui.edit_buffer.clear();
+            app.settings_ui.edit_clear();
         }
-        KeyCode::Backspace => {
-            app.settings_ui.edit_buffer.pop();
-        }
-        KeyCode::Char(character) => {
-            let limit = match app.settings_ui.edit_target {
-                EditTarget::ProbeLabel => 18,
-                EditTarget::PresetName => 40,
-                _ => 64,
-            };
-            if app.settings_ui.edit_buffer.chars().count() < limit {
-                app.settings_ui.edit_buffer.push(character);
-            }
-        }
+        KeyCode::Backspace => app.settings_ui.edit_backspace(),
+        KeyCode::Delete => app.settings_ui.edit_delete(),
+        KeyCode::Left => app.settings_ui.edit_move(-1),
+        KeyCode::Right => app.settings_ui.edit_move(1),
+        KeyCode::Home => app.settings_ui.edit_home(),
+        KeyCode::End => app.settings_ui.edit_end(),
+        KeyCode::Char(character) => app.settings_ui.edit_insert(character),
         _ => {}
     }
 }
 
 fn commit_edit(app: &mut App) {
     let text = app.settings_ui.edit_buffer.clone();
-    let target = app.settings_ui.edit_target;
+    let target = app.settings_ui.edit_target();
     app.settings_ui.editing = false;
-    app.settings_ui.edit_target = EditTarget::None;
+    app.settings_ui.set_edit_target(EditTarget::None);
     match target {
         EditTarget::ProbeLabel => {
             if let Some(form) = app.settings_ui.probe_form
@@ -373,9 +362,9 @@ fn new_preset(app: &mut App) {
         field: 0,
         new: true,
     });
-    app.settings_ui.edit_buffer = app.settings.presets[index].name.clone();
-    app.settings_ui.editing = true;
-    app.settings_ui.edit_target = EditTarget::PresetName;
+    let name = app.settings.presets[index].name.clone();
+    app.settings_ui.set_edit_target(EditTarget::PresetName);
+    app.settings_ui.edit_start(name);
     app.commit_settings();
 }
 
