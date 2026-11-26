@@ -3,9 +3,12 @@
 use super::*;
 
 impl App {
-    pub(crate) async fn sync_alerts_view(&mut self, now: AppInstant, snapshot: &Snapshot) {
+    pub(crate) fn sync_alerts_view(&mut self, now: AppInstant, snapshot: &Snapshot) {
         let serve_at = self.serve_wall.map(|wall| self.fmt_wall(wall));
-        let mut shared = self.shared.lock().await;
+        let mut shared = self
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         shared.sync(
             &self.engine,
             snapshot,

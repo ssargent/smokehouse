@@ -9,7 +9,8 @@ use chrono::{DateTime, Local, Timelike as _};
 use futures::StreamExt as _;
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent, KeyEventKind};
-use tokio::sync::{Mutex, mpsc};
+use std::sync::Mutex;
+use tokio::sync::mpsc;
 
 use crate::alerts::{
     ActiveAlerts, ActiveInfo, AlertEngine, AlertKey, AlertKind, Priority, ProbeSnapshot, Snapshot,
@@ -460,7 +461,7 @@ impl App {
         }
 
         self.alerts_view.cleared = self.engine.cleared_recent(now);
-        self.sync_alerts_view(now, &snapshot).await;
+        self.sync_alerts_view(now, &snapshot);
 
         if self.logger.due(now) {
             let temps = self.temps_c();

@@ -6,7 +6,8 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::{Mutex, mpsc};
+use std::sync::Mutex;
+use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 
 use crate::alerts::{ActiveAlerts, AlertKey, Priority};
@@ -270,11 +271,14 @@ async fn run_worker(
 
     loop {
         if current.is_none()
-            && let Some(item) = next_item(&mut queue, shared, settings, force_off, clock).await
+            && let Some(item) = next_item(&mut queue, shared, settings, force_off, clock)
         {
-            let text = phrase(item, shared).await;
+            let text = phrase(item, shared);
             if let Some(key) = item.key.alert() {
-                shared.lock().await.mark_spoken(&key, clock.now());
+                shared
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .mark_spoken(&key, clock.now());
             }
             let future = speaker.start(&text, settings);
             let done = done_tx.clone();
@@ -324,7 +328,7 @@ async fn run_worker(
 }
 
 /// Take the next item that should actually be spoken, dropping stale ones.
-async fn next_item(
+fn next_item(
     queue: &mut SpeechQueue,
     shared: &Arc<Mutex<ActiveAlerts>>,
     settings: &SpeechSettings,
@@ -336,7 +340,10 @@ async fn next_item(
             continue;
         }
         if let Some(key) = item.key.alert()
-            && !shared.lock().await.is_active_unacked(&key)
+            && !shared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_active_unacked(&key)
         {
             continue;
         }
@@ -368,10 +375,16 @@ fn allowed(
     true
 }
 
-async fn phrase(item: SpeechItem, shared: &Arc<Mutex<ActiveAlerts>>) -> String {
+fn phrase(item: SpeechItem, shared: &Arc<Mutex<ActiveAlerts>>) -> String {
     match item.key {
-        SpeechKey::Alert(key) => shared.lock().await.build_text(&key),
-        SpeechKey::Status => shared.lock().await.build_status(),
+        SpeechKey::Alert(key) => shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .build_text(&key),
+        SpeechKey::Status => shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .build_status(),
         SpeechKey::Preview => String::from("This is the bbq-watch voice preview."),
         SpeechKey::Test => String::from("Test alarm from bbq-watch."),
     }

@@ -12,7 +12,8 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::{Mutex, mpsc};
+use std::sync::Mutex;
+use tokio::sync::mpsc;
 
 use crate::alerts::{ActiveAlerts, Delivery, Priority};
 use crate::clock::AppClock;
@@ -172,7 +173,10 @@ async fn dispatch(
     client: Option<&reqwest::Client>,
     errors: &mpsc::Sender<String>,
 ) {
-    let message = shared.lock().await.build_text(&delivery.key);
+    let message = shared
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .build_text(&delivery.key);
     let urgent = delivery.priority == Priority::Urgent;
     fan_out(settings, &message, urgent, client, errors);
     speech.item(SpeechItem {
