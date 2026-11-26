@@ -45,3 +45,23 @@ before connecting. While scanning, the dashboard shows a hint to that effect.
 | `~/bbq-watch/cook-YYYY-MM-DD-HHMM.csv` | One CSV per cook (change the directory in Settings). |
 
 Settings can also be pointed at another file with `--config`.
+
+## Cook presets
+
+Presets are stored in the config file under `[[presets]]` (id, name, target in
+°F, and the pit range and alerts), so they can be edited by hand or from the
+Settings tab. Each probe's `preset` field holds the id of the preset it uses.
+
+In the Settings tab (`5`), press `p` on the Probes table (or `Enter` on a
+probe's `Preset` column) to open the preset list:
+
+| Key | Action |
+|---|---|
+| `↑`/`↓` | Choose a preset. |
+| `Enter` | Apply it to the selected probe. |
+| `e` | Edit it: name, target, pit flag, pit range and pit alerts. |
+| `n` | Add a preset after the highlighted one. |
+| `d` | Delete the highlighted preset (probes using it fall back to a neighbour). |
+| `Esc` | Close the list. |
+
+Preset edits, like every other setting, are written to the config file with `s`.

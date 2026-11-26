@@ -69,7 +69,7 @@ fn draw_card(frame: &mut Frame, area: Rect, app: &App, index: usize) {
         return;
     }
     let state = &app.probes[index];
-    if cfg.preset.is_pit() {
+    if app.is_pit(index) {
         draw_pit_card(frame, inner, app, &cfg, state);
     } else {
         draw_meat_card(frame, inner, app, &cfg, state);

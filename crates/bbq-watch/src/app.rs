@@ -282,7 +282,7 @@ impl App {
     /// Whether probe `index` is the pit probe.
     #[must_use]
     pub(crate) fn is_pit(&self, index: usize) -> bool {
-        self.settings.probe(index).preset.is_pit()
+        self.settings.is_pit(index)
     }
 
     /// Whether the thermometer is connected.
@@ -468,7 +468,7 @@ impl App {
                 }
                 StallTransition::None => {}
             }
-            if !cfg.preset.is_pit() {
+            if !self.settings.is_pit(index) {
                 if let Some(temp) = probe.temp_c {
                     let fahrenheit = celsius_to_fahrenheit(temp);
                     let milestone = (fahrenheit / 20.0).floor() * 20.0;
@@ -612,7 +612,7 @@ impl App {
         let probes = (0..PROBE_COUNT)
             .map(|index| {
                 let cfg = self.settings.probe(index);
-                let is_pit = cfg.preset.is_pit();
+                let is_pit = self.settings.is_pit(index);
                 ProbeSnapshot {
                     id: ProbeId::from_index(index),
                     label: cfg.label.clone(),

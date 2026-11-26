@@ -119,6 +119,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
     if app.show_help {
         draw_help(frame, area);
     }
+
+    if app.quit_prompt {
+        draw_quit_prompt(frame, area);
+    }
 }
 
 fn too_small(frame: &mut Frame, area: Rect) {
@@ -347,6 +351,39 @@ fn draw_help(frame: &mut Frame, area: Rect) {
             ])
         })
         .collect();
+    frame.render_widget(Paragraph::new(lines).block(block), popup);
+}
+
+/// Confirmation shown when `q` is pressed while a probe is connected.
+fn draw_quit_prompt(frame: &mut Frame, area: Rect) {
+    let width = 44.min(area.width);
+    let height = 6.min(area.height);
+    let popup = Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme::YELLOW))
+        .title(" Quit and end cook? ")
+        .style(theme::base());
+    let key = Style::default()
+        .fg(theme::ACCENT)
+        .add_modifier(Modifier::BOLD);
+    let lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("    y", key),
+            Span::styled("  quit      ", Style::default().fg(theme::FG)),
+            Span::styled("n", key),
+            Span::styled("  cancel", Style::default().fg(theme::FG)),
+        ]),
+        Line::from(""),
+    ];
     frame.render_widget(Paragraph::new(lines).block(block), popup);
 }
 

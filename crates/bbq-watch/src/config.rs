@@ -126,119 +126,110 @@ impl DeviceScreenUnits {
 }
 
 /// Cook preset; choosing one sets the probe target (and pit range).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Preset {
-    /// Brisket, probe-tender.
-    Brisket,
-    /// Beef ribs.
-    BeefRibs,
-    /// Pork shoulder, pulled.
-    PorkPulled,
-    /// Pork shoulder, sliced.
-    PorkSliced,
-    /// Pork ribs.
-    PorkRibs,
-    /// Pork loin.
-    PorkLoin,
-    /// Chicken breast or whole bird.
-    Chicken,
-    /// Chicken thighs.
-    ChickenThigh,
-    /// Turkey breast.
-    TurkeyBreast,
-    /// Beef, medium-rare.
-    BeefMr,
-    /// Salmon.
-    Salmon,
-    /// Pit / ambient probe.
-    Pit,
-    /// Leave the target untouched.
-    #[default]
-    Custom,
+///
+/// Presets live in the config file (`[[presets]]`), so they can be edited and
+/// extended from the Settings tab.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Preset {
+    /// Stable key referenced by `[[probes]] preset`.
+    #[serde(default)]
+    pub id: String,
+    /// Menu label.
+    #[serde(default)]
+    pub name: String,
+    /// Target temperature in °F (`None` = leave the target untouched).
+    #[serde(default)]
+    pub target_f: Option<f32>,
+    /// Pit / ambient preset: apply the range and alert bounds below instead.
+    #[serde(default)]
+    pub pit: bool,
+    /// Pit range in °F, `[low, high]`.
+    #[serde(default)]
+    pub range_f: Option<[f32; 2]>,
+    /// Pit low-alert threshold in °F.
+    #[serde(default)]
+    pub alert_low_f: Option<f32>,
+    /// Pit high-alert threshold in °F.
+    #[serde(default)]
+    pub alert_high_f: Option<f32>,
 }
 
 impl Preset {
-    /// All presets, in display order.
-    pub const ALL: [Self; 13] = [
-        Self::Brisket,
-        Self::BeefRibs,
-        Self::PorkPulled,
-        Self::PorkSliced,
-        Self::PorkRibs,
-        Self::PorkLoin,
-        Self::Chicken,
-        Self::ChickenThigh,
-        Self::TurkeyBreast,
-        Self::BeefMr,
-        Self::Salmon,
-        Self::Pit,
-        Self::Custom,
-    ];
-
-    /// Menu label.
-    #[must_use]
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Brisket => "Brisket · probe-tender",
-            Self::BeefRibs => "Beef ribs",
-            Self::PorkPulled => "Pork shoulder · pulled",
-            Self::PorkSliced => "Pork shoulder · sliced",
-            Self::PorkRibs => "Pork ribs",
-            Self::PorkLoin => "Pork loin",
-            Self::Chicken => "Chicken breast / whole",
-            Self::ChickenThigh => "Chicken thighs",
-            Self::TurkeyBreast => "Turkey breast",
-            Self::BeefMr => "Beef · medium-rare",
-            Self::Salmon => "Salmon",
-            Self::Pit => "Pit / ambient",
-            Self::Custom => "Custom",
-        }
-    }
-
-    /// Target temperature in °C, when the preset defines one.
-    #[must_use]
-    pub fn target_c(self) -> Option<f32> {
-        self.target_f().map(fahrenheit_to_celsius)
-    }
-
-    fn target_f(self) -> Option<f32> {
-        match self {
-            Self::Brisket | Self::BeefRibs => Some(203.0),
-            Self::PorkPulled | Self::PorkRibs => Some(195.0),
-            Self::PorkSliced => Some(185.0),
-            Self::PorkLoin => Some(145.0),
-            Self::Chicken => Some(165.0),
-            Self::ChickenThigh => Some(175.0),
-            Self::TurkeyBreast => Some(160.0),
-            Self::BeefMr => Some(130.0),
-            Self::Salmon => Some(140.0),
-            Self::Pit | Self::Custom => None,
-        }
-    }
-
-    /// True for the pit / ambient preset.
-    #[must_use]
-    pub fn is_pit(self) -> bool {
-        matches!(self, Self::Pit)
-    }
-
     /// Apply the preset to a probe config (target, and pit range and alerts).
-    pub fn apply(self, probe: &mut ProbeConfig) {
-        probe.preset = self;
-        match self {
-            Self::Pit => {
-                probe.target_c = None;
-                probe.range_c = Some([fahrenheit_to_celsius(225.0), fahrenheit_to_celsius(275.0)]);
-                probe.alert_low_c = Some(fahrenheit_to_celsius(215.0));
-                probe.alert_high_c = Some(fahrenheit_to_celsius(290.0));
+    pub fn apply(&self, probe: &mut ProbeConfig) {
+        probe.preset.clone_from(&self.id);
+        if self.pit {
+            probe.target_c = None;
+            if let Some([low, high]) = self.range_f {
+                probe.range_c = Some([fahrenheit_to_celsius(low), fahrenheit_to_celsius(high)]);
             }
-            Self::Custom => {}
-            other => {
-                probe.target_c = other.target_c();
+            if let Some(low) = self.alert_low_f {
+                probe.alert_low_c = Some(fahrenheit_to_celsius(low));
             }
+            if let Some(high) = self.alert_high_f {
+                probe.alert_high_c = Some(fahrenheit_to_celsius(high));
+            }
+        } else if let Some(target) = self.target_f {
+            probe.target_c = Some(fahrenheit_to_celsius(target));
         }
     }
+
+    /// A config-file-friendly id for a preset name.
+    #[must_use]
+    pub fn slugify(name: &str) -> String {
+        let mut slug = String::new();
+        for character in name.chars() {
+            if character.is_ascii_alphanumeric() {
+                slug.push(character.to_ascii_lowercase());
+            } else if !slug.is_empty() && !slug.ends_with('_') {
+                slug.push('_');
+            }
+        }
+        while slug.ends_with('_') {
+            slug.pop();
+        }
+        if slug.is_empty() {
+            slug.push_str("preset");
+        }
+        slug
+    }
+}
+
+/// The presets a fresh config starts with.
+fn default_presets() -> Vec<Preset> {
+    let meat = |id: &str, name: &str, target_f: f32| Preset {
+        id: String::from(id),
+        name: String::from(name),
+        target_f: Some(target_f),
+        ..Preset::default()
+    };
+    vec![
+        meat("brisket", "Brisket · probe-tender", 203.0),
+        meat("beef_ribs", "Beef ribs", 203.0),
+        meat("pork_pulled", "Pork shoulder · pulled", 195.0),
+        meat("pork_sliced", "Pork shoulder · sliced", 185.0),
+        meat("pork_ribs", "Pork ribs", 195.0),
+        meat("pork_loin", "Pork loin", 145.0),
+        meat("chicken", "Chicken breast / whole", 165.0),
+        meat("chicken_thigh", "Chicken thighs", 175.0),
+        meat("turkey_breast", "Turkey breast", 160.0),
+        meat("beef_mr", "Beef · medium-rare", 130.0),
+        meat("salmon", "Salmon", 140.0),
+        Preset {
+            id: String::from("pit"),
+            name: String::from("Pit / ambient"),
+            pit: true,
+            range_f: Some([225.0, 275.0]),
+            alert_low_f: Some(215.0),
+            alert_high_f: Some(290.0),
+            ..Preset::default()
+        },
+        Preset {
+            id: String::from("custom"),
+            name: String::from("Custom"),
+            ..Preset::default()
+        },
+    ]
 }
 
 /// One probe's settings.
@@ -247,9 +238,9 @@ pub struct ProbeConfig {
     /// Display label (max 18 characters in the editor).
     #[serde(default)]
     pub label: String,
-    /// Cook preset.
-    #[serde(default)]
-    pub preset: Preset,
+    /// Cook preset id, resolved against [`Settings::presets`].
+    #[serde(default = "default_preset_id")]
+    pub preset: String,
     /// Target temperature in °C (`None` for the pit preset).
     #[serde(default)]
     pub target_c: Option<f32>,
@@ -277,7 +268,7 @@ impl Default for ProbeConfig {
     fn default() -> Self {
         Self {
             label: String::from("Probe"),
-            preset: Preset::Custom,
+            preset: default_preset_id(),
             target_c: None,
             range_c: None,
             alert_low_c: None,
@@ -554,6 +545,9 @@ pub struct Settings {
     /// The four probe definitions.
     #[serde(default = "default_probes")]
     pub probes: Vec<ProbeConfig>,
+    /// Cook presets, editable from the Settings tab.
+    #[serde(default = "default_presets")]
+    pub presets: Vec<Preset>,
     /// Alarms section.
     #[serde(default)]
     pub alarms: AlarmSettings,
@@ -576,6 +570,7 @@ impl Default for Settings {
         Self {
             display: DisplaySettings::default(),
             probes: default_probes(),
+            presets: default_presets(),
             alarms: AlarmSettings::default(),
             speech: SpeechSettings::default(),
             cook: CookSettings::default(),
@@ -593,6 +588,51 @@ impl Settings {
             .get(index)
             .cloned()
             .unwrap_or_else(|| default_probe(index))
+    }
+
+    /// The preset with `id`, when the config defines it.
+    #[must_use]
+    pub fn preset(&self, id: &str) -> Option<&Preset> {
+        self.presets.iter().find(|preset| preset.id == id)
+    }
+
+    /// Display name for the preset with `id`, falling back to the id itself.
+    #[must_use]
+    pub fn preset_name(&self, id: &str) -> String {
+        self.preset(id)
+            .map_or_else(|| id.to_string(), |preset| preset.name.clone())
+    }
+
+    /// Whether probe `index` uses the pit / ambient preset.
+    #[must_use]
+    pub fn is_pit(&self, index: usize) -> bool {
+        let id = self.probes.get(index).map_or_else(
+            || default_probe_preset(index),
+            |probe| probe.preset.as_str(),
+        );
+        self.preset(id).is_some_and(|preset| preset.pit)
+    }
+
+    /// `base`, or `base_2`, `base_3`… when another preset already uses it.
+    /// `ignore` is the index of the preset being renamed.
+    #[must_use]
+    pub fn unique_preset_id(&self, base: &str, ignore: Option<usize>) -> String {
+        let taken = |candidate: &str| {
+            self.presets
+                .iter()
+                .enumerate()
+                .any(|(index, preset)| preset.id == candidate && Some(index) != ignore)
+        };
+        if !taken(base) {
+            return base.to_string();
+        }
+        for suffix in 2..1000 {
+            let candidate = format!("{base}_{suffix}");
+            if !taken(&candidate) {
+                return candidate;
+            }
+        }
+        base.to_string()
     }
 
     /// CSV directory, resolving the empty default to `~/bbq-watch`.
@@ -614,39 +654,40 @@ fn default_probes() -> Vec<ProbeConfig> {
     (0..PROBE_COUNT).map(default_probe).collect()
 }
 
-fn default_probe(index: usize) -> ProbeConfig {
+/// Preset id a probe falls back to when the config omits its probes.
+fn default_probe_preset(index: usize) -> &'static str {
     match index {
-        0 => ProbeConfig {
-            label: String::from("Brisket Point"),
-            preset: Preset::Brisket,
-            target_c: Preset::Brisket.target_c(),
-            color: ProbeColor::Red,
-            ..ProbeConfig::default()
-        },
-        1 => ProbeConfig {
-            label: String::from("Brisket Flat"),
-            preset: Preset::Brisket,
-            target_c: Preset::Brisket.target_c(),
-            color: ProbeColor::Orange,
-            ..ProbeConfig::default()
-        },
-        2 => ProbeConfig {
-            label: String::from("Pork Butt"),
-            preset: Preset::PorkPulled,
-            target_c: Preset::PorkPulled.target_c(),
-            color: ProbeColor::Green,
-            ..ProbeConfig::default()
-        },
-        _ => {
-            let mut probe = ProbeConfig {
-                label: String::from("Pit"),
-                color: ProbeColor::Blue,
-                ..ProbeConfig::default()
-            };
-            Preset::Pit.apply(&mut probe);
-            probe
-        }
+        0 | 1 => "brisket",
+        2 => "pork_pulled",
+        _ => "pit",
     }
+}
+
+fn default_probe(index: usize) -> ProbeConfig {
+    let (label, color) = match index {
+        0 => ("Brisket Point", ProbeColor::Red),
+        1 => ("Brisket Flat", ProbeColor::Orange),
+        2 => ("Pork Butt", ProbeColor::Green),
+        _ => ("Pit", ProbeColor::Blue),
+    };
+    let mut probe = ProbeConfig {
+        label: String::from(label),
+        color,
+        ..ProbeConfig::default()
+    };
+    let preset = default_probe_preset(index);
+    if let Some(found) = default_presets()
+        .into_iter()
+        .find(|entry| entry.id == preset)
+    {
+        found.apply(&mut probe);
+    }
+    probe
+}
+
+/// Preset id a probe starts with when the config omits one.
+fn default_preset_id() -> String {
+    String::from("custom")
 }
 
 fn default_theme() -> String {
@@ -752,7 +793,11 @@ pub fn load(path: &Path) -> Result<Settings, ConfigError> {
     if text.trim().is_empty() {
         return create_default(path);
     }
-    Ok(toml::from_str(&text)?)
+    let mut settings: Settings = toml::from_str(&text)?;
+    if settings.presets.is_empty() {
+        settings.presets = default_presets();
+    }
+    Ok(settings)
 }
 
 /// Write settings atomically (temp file, then rename).
@@ -836,9 +881,11 @@ mod tests {
         let settings = Settings::default();
         assert_eq!(settings.probes.len(), PROBE_COUNT);
         assert_eq!(settings.probes[0].label, "Brisket Point");
-        assert!(settings.probes[3].preset.is_pit());
+        assert!(settings.is_pit(3));
+        assert!(!settings.is_pit(0));
         assert!(settings.probes[3].target_c.is_none());
         assert!(settings.probes[3].range_c.is_some());
+        assert_eq!(settings.preset_name("brisket"), "Brisket · probe-tender");
     }
 
     #[test]
@@ -847,6 +894,8 @@ mod tests {
         let text = toml::to_string_pretty(&settings).unwrap();
         let back: Settings = toml::from_str(&text).unwrap();
         assert_eq!(back.probes.len(), PROBE_COUNT);
+        assert_eq!(back.presets.len(), settings.presets.len());
+        assert_eq!(back.presets[0].id, "brisket");
         assert_eq!(back.alarms.repeat_s, 90);
         assert_eq!(back.display.units, Unit::Fahrenheit);
     }
@@ -858,15 +907,90 @@ mod tests {
         assert!(!settings.data.csv_enabled);
         assert_eq!(settings.alarms.repeat_s, 90);
         assert_eq!(settings.probes.len(), PROBE_COUNT);
+        assert_eq!(settings.presets.len(), 13);
+    }
+
+    #[test]
+    fn loads_legacy_preset_names() {
+        let legacy =
+            "[[probes]]\nlabel = \"Brisket Point\"\npreset = \"brisket\"\ntarget_c = 95.0\n";
+        let settings: Settings = toml::from_str(legacy).unwrap();
+        assert_eq!(settings.probes[0].preset, "brisket");
+        assert_eq!(
+            settings.preset_name(&settings.probes[0].preset),
+            "Brisket · probe-tender"
+        );
+        assert!(!settings.is_pit(0));
     }
 
     #[test]
     fn preset_sets_target() {
+        let settings = Settings::default();
         let mut probe = ProbeConfig::default();
-        Preset::PorkPulled.apply(&mut probe);
-        assert_eq!(probe.preset, Preset::PorkPulled);
+        settings.preset("pork_pulled").unwrap().apply(&mut probe);
+        assert_eq!(probe.preset, "pork_pulled");
         let target_f = crate::model::celsius_to_fahrenheit(probe.target_c.unwrap());
         assert!((target_f - 195.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn pit_preset_sets_range_and_alerts() {
+        let settings = Settings::default();
+        let mut probe = ProbeConfig::default();
+        settings.preset("pit").unwrap().apply(&mut probe);
+        assert_eq!(probe.preset, "pit");
+        assert!(probe.target_c.is_none());
+        let range = probe.range_c.unwrap();
+        let fahrenheit = crate::model::celsius_to_fahrenheit;
+        assert!((fahrenheit(range[0]) - 225.0).abs() < 0.01);
+        assert!((fahrenheit(range[1]) - 275.0).abs() < 0.01);
+        assert!((fahrenheit(probe.alert_low_c.unwrap()) - 215.0).abs() < 0.01);
+        assert!((fahrenheit(probe.alert_high_c.unwrap()) - 290.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn preset_edits_persist_through_save_and_load() {
+        let dir = std::env::temp_dir().join(format!("bbq-watch-presets-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut settings = load(&path).unwrap();
+        settings.presets[0].name = String::from("Brisket · 205");
+        settings.presets[0].target_f = Some(205.0);
+        settings.presets.push(Preset {
+            id: String::from("picanha"),
+            name: String::from("Picanha"),
+            target_f: Some(135.0),
+            ..Preset::default()
+        });
+        settings.probes[0].preset = String::from("picanha");
+        save(&settings, &path).unwrap();
+
+        let reloaded = load(&path).unwrap();
+        assert_eq!(reloaded.preset_name("brisket"), "Brisket · 205");
+        assert_eq!(reloaded.preset("brisket").unwrap().target_f, Some(205.0));
+        assert_eq!(reloaded.preset("picanha").unwrap().target_f, Some(135.0));
+        assert_eq!(reloaded.probes[0].preset, "picanha");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn preset_ids_slugify_names() {
+        assert_eq!(Preset::slugify("Picanha"), "picanha");
+        assert_eq!(
+            Preset::slugify("Brisket · probe-tender"),
+            "brisket_probe_tender"
+        );
+        assert_eq!(Preset::slugify("  Hot & Fast  "), "hot_fast");
+        assert_eq!(Preset::slugify("°°"), "preset");
+    }
+
+    #[test]
+    fn preset_ids_avoid_collisions() {
+        let settings = Settings::default();
+        assert_eq!(settings.unique_preset_id("picanha", None), "picanha");
+        assert_eq!(settings.unique_preset_id("brisket", None), "brisket_2");
+        // Renaming a preset may keep its own id.
+        assert_eq!(settings.unique_preset_id("brisket", Some(0)), "brisket");
     }
 
     #[test]

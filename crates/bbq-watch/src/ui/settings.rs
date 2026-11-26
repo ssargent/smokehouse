@@ -21,8 +21,17 @@ const SECTIONS: usize = 6;
 /// Columns of the probes table.
 const PROBE_COLUMNS: usize = 9;
 
+/// Column of the probes table that holds the label (also the initial column).
+const LABEL_COLUMN: usize = 1;
+
+/// Rows of the preset editor popup.
+const PRESET_ROWS: usize = 7;
+
+/// Width of the preset popups.
+const PRESET_POPUP_WIDTH: u16 = 76;
+
 /// Focus and edit state for the Settings tab.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct SettingsUi {
     pub(crate) section: usize,
     pub(crate) field: usize,
@@ -32,7 +41,29 @@ pub(crate) struct SettingsUi {
     pub(crate) edit_buffer: String,
     pub(crate) preset_popup: bool,
     pub(crate) preset_index: usize,
+    /// Whether the preset popup shows the editor instead of the list.
+    preset_edit: bool,
+    /// Focused row of the preset editor.
+    preset_row: usize,
     pub(crate) dirty: bool,
+}
+
+impl Default for SettingsUi {
+    fn default() -> Self {
+        Self {
+            section: 0,
+            field: 0,
+            probe_row: 0,
+            probe_col: LABEL_COLUMN,
+            editing: false,
+            edit_buffer: String::new(),
+            preset_popup: false,
+            preset_index: 0,
+            preset_edit: false,
+            preset_row: 0,
+            dirty: false,
+        }
+    }
 }
 
 /// Kind of a settings field.
@@ -613,10 +644,25 @@ fn draw_probes(frame: &mut Frame, area: Rect, app: &App) {
                 || String::from("—"),
                 |c| format!("{:.0}°", unit.delta_from_c(c)),
             );
+            let label_editing = app.settings_ui.section == 0
+                && app.settings_ui.probe_row == index
+                && app.settings_ui.editing;
+            let label = if label_editing {
+                Cell::from(Line::from(vec![
+                    Span::raw(" "),
+                    Span::styled(
+                        app.settings_ui.edit_buffer.clone(),
+                        Style::default().bg(theme::FIELD_BG).fg(theme::FG),
+                    ),
+                    Span::styled("▏", Style::default().fg(theme::ACCENT)),
+                ]))
+            } else {
+                Cell::from(format!(" {}", cfg.label))
+            };
             Row::new(vec![
                 Cell::from(format!(" {}", index + 1)),
-                Cell::from(format!(" {}", cfg.label)),
-                Cell::from(format!(" {} ", cfg.preset.label())),
+                label,
+                Cell::from(format!(" {} ", app.settings.preset_name(&cfg.preset))),
                 Cell::from(format!(" {target}")),
                 Cell::from(format!(" {low}")),
                 Cell::from(format!(" {high}")),
@@ -678,8 +724,13 @@ fn draw_probes(frame: &mut Frame, area: Rect, app: &App) {
         &mut TableState::default().with_selected(highlight),
     );
 
+    let hint_text = if app.settings_ui.editing {
+        " Enter save   Esc cancel   Ctrl-U clear   Backspace delete "
+    } else {
+        " Enter edit   p presets (n new · e edit · d delete)   ←/→ column   +/- adjust   Space chart "
+    };
     let hint = Line::from(vec![Span::styled(
-        " Enter edit label   p choose preset   ←/→ column   +/- adjust (1°, Shift 5°)   Space chart   Labels are saved per-probe ",
+        hint_text,
         Style::default().fg(theme::MUTED),
     )]);
     let hint_area = Rect {
@@ -829,28 +880,47 @@ fn render_field(field: &Field, settings: &Settings, app: &App, selected: bool) -
     Line::from(spans)
 }
 
+/// Draw the preset manager: the list, or the editor for the selected preset.
 fn draw_preset_popup(frame: &mut Frame, area: Rect, app: &App) {
-    let width = 40.min(area.width);
-    let height = (Preset::ALL.len() as u16 + 2).min(area.height);
-    let popup = Rect {
+    if app.settings_ui.preset_edit {
+        draw_preset_editor(frame, area, app);
+    } else {
+        draw_preset_list(frame, area, app);
+    }
+}
+
+/// A popup rectangle of `width`×`height`, centred in `area`.
+fn centered(area: Rect, width: u16, height: u16) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    Rect {
         x: area.x + (area.width - width) / 2,
         y: area.y + (area.height - height) / 2,
         width,
         height,
-    };
+    }
+}
+
+fn draw_preset_list(frame: &mut Frame, area: Rect, app: &App) {
+    let presets = &app.settings.presets;
+    let popup = centered(area, PRESET_POPUP_WIDTH, presets.len() as u16 + 2);
     frame.render_widget(Clear, popup);
-    let items: Vec<Line> = Preset::ALL
+    let items: Vec<Line> = presets
         .iter()
         .map(|preset| {
-            let target = preset.target_c().map_or_else(
-                || String::from("—"),
-                |c| format!("{:.0}°F", crate::model::celsius_to_fahrenheit(c)),
-            );
-            Line::from(format!(" {}  {}", preset.label(), target))
+            Line::from(format!(
+                " {:<46}{:>12} ",
+                preset.name,
+                preset_target(preset)
+            ))
         })
         .collect();
+    let hint = Line::from(Span::styled(
+        " ↑/↓ choose · Enter apply · e edit · n new · d delete · Esc close ",
+        Style::default().fg(theme::MUTED),
+    ));
     let list = List::new(items)
-        .block(theme::block(" Choose preset "))
+        .block(theme::block(" Presets ").title_bottom(hint))
         .highlight_style(
             Style::default()
                 .bg(theme::SELECTED_BG)
@@ -859,6 +929,111 @@ fn draw_preset_popup(frame: &mut Frame, area: Rect, app: &App) {
         .highlight_symbol("▶ ");
     let mut state = ListState::default().with_selected(Some(app.settings_ui.preset_index));
     frame.render_stateful_widget(list, popup, &mut state);
+}
+
+/// `203°F`, `225–275°F` for a pit preset, or `—` when the preset sets neither.
+fn preset_target(preset: &Preset) -> String {
+    if preset.pit {
+        return preset.range_f.map_or_else(
+            || String::from("—"),
+            |[low, high]| format!("{low:.0}–{high:.0}°F"),
+        );
+    }
+    preset
+        .target_f
+        .map_or_else(|| String::from("—"), |target| format!("{target:.0}°F"))
+}
+
+fn draw_preset_editor(frame: &mut Frame, area: Rect, app: &App) {
+    let Some(preset) = app.settings.presets.get(app.settings_ui.preset_index) else {
+        return;
+    };
+    let popup = centered(area, PRESET_POPUP_WIDTH, PRESET_ROWS as u16 + 2);
+    frame.render_widget(Clear, popup);
+    let hint = Line::from(Span::styled(
+        " ↑/↓ field · ←/→ 1°F · +/- 5°F · Space toggle · Enter rename · Esc back ",
+        Style::default().fg(theme::MUTED),
+    ));
+    let block = theme::block(" Edit preset ").title_bottom(hint);
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+    let lines: Vec<Line> = (0..PRESET_ROWS)
+        .map(|row| preset_editor_line(app, preset, row))
+        .collect();
+    frame.render_widget(Paragraph::new(lines).style(theme::base()), inner);
+}
+
+/// One row of the preset editor.
+fn preset_editor_line(app: &App, preset: &Preset, row: usize) -> Line<'static> {
+    let selected = app.settings_ui.preset_row == row;
+    // The target applies to meat presets; the bounds below only to the pit one.
+    let inactive = if row == 1 {
+        preset.pit
+    } else {
+        row >= 3 && !preset.pit
+    };
+    let label_style = if selected {
+        Style::default()
+            .fg(theme::ACCENT)
+            .add_modifier(Modifier::BOLD)
+    } else if inactive {
+        Style::default().fg(theme::MUTED)
+    } else {
+        Style::default().fg(theme::FG)
+    };
+    let (label, spans) = match row {
+        0 => ("Name", preset_name_spans(app, preset)),
+        1 => ("Target", spinner_spans(preset.target_f, "°F")),
+        2 => ("Pit preset", toggle_spans(preset.pit)),
+        3 => (
+            "Pit range low",
+            spinner_spans(preset.range_f.map(|range| range[0]), "°F"),
+        ),
+        4 => (
+            "Pit range high",
+            spinner_spans(preset.range_f.map(|range| range[1]), "°F"),
+        ),
+        5 => ("Pit low alert", spinner_spans(preset.alert_low_f, "°F")),
+        _ => ("Pit high alert", spinner_spans(preset.alert_high_f, "°F")),
+    };
+    let mut line = vec![Span::styled(format!(" {label:<15}"), label_style)];
+    line.extend(spans);
+    Line::from(line)
+}
+
+fn preset_name_spans(app: &App, preset: &Preset) -> Vec<Span<'static>> {
+    let style = Style::default().bg(theme::FIELD_BG).fg(theme::FG);
+    if app.settings_ui.editing {
+        vec![
+            Span::styled(" ", style),
+            Span::styled(app.settings_ui.edit_buffer.clone(), style),
+            Span::styled("▏", Style::default().fg(theme::ACCENT)),
+        ]
+    } else {
+        vec![Span::styled(format!(" {} ", preset.name), style)]
+    }
+}
+
+fn spinner_spans(value: Option<f32>, unit: &'static str) -> Vec<Span<'static>> {
+    let text = value.map_or_else(|| String::from("—"), |number| format!("{number:.0}"));
+    vec![
+        Span::styled("◀ ", Style::default().fg(theme::MUTED)),
+        Span::styled(
+            format!(" {text} "),
+            Style::default()
+                .bg(theme::FIELD_BG)
+                .fg(theme::FG)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!(" ▶ {unit}"), Style::default().fg(theme::MUTED)),
+    ]
+}
+
+fn toggle_spans(on: bool) -> Vec<Span<'static>> {
+    vec![Span::styled(
+        if on { " [x] " } else { " [ ] " },
+        Style::default().fg(if on { theme::GREEN } else { theme::MUTED }),
+    )]
 }
 
 /// Handle a key press on the Settings tab.
@@ -988,44 +1163,59 @@ fn adjust_probe(app: &mut App, direction: i32, modifiers: KeyModifiers) {
         1.0
     };
     let delta = f64::from(direction) * step;
-    let mut changed = true;
-    {
-        let Some(probe) = app.settings.probes.get_mut(row) else {
-            return;
-        };
-        match column {
-            2 => {
-                let index = step_index(
-                    Preset::ALL
+
+    if column == 2 {
+        let mut applied = false;
+        {
+            let Settings {
+                probes, presets, ..
+            } = &mut app.settings;
+            if let Some(probe) = probes.get_mut(row) {
+                let len = presets.len();
+                if len > 0 {
+                    let current = presets
                         .iter()
-                        .position(|preset| *preset == probe.preset)
-                        .unwrap_or(0),
-                    Preset::ALL.len(),
-                    direction,
-                );
-                Preset::ALL[index].apply(probe);
-            }
-            3..=6 => {
-                let adjust = |value: &mut Option<f32>| {
-                    let current = value.map_or(0.0, |c| f64::from(unit.from_c(c)));
-                    let next = current + delta;
-                    *value = Some(unit.to_c(next as f32));
-                };
-                match column {
-                    3 => adjust(&mut probe.target_c),
-                    4 => adjust(&mut probe.alert_low_c),
-                    5 => adjust(&mut probe.alert_high_c),
-                    _ => {
-                        let mut pre = probe.pre_alert_c;
-                        adjust(&mut pre);
-                        probe.pre_alert_c = pre;
+                        .position(|preset| preset.id == probe.preset)
+                        .unwrap_or(0);
+                    let index = step_index(current, len, direction);
+                    if let Some(preset) = presets.get(index) {
+                        preset.apply(probe);
+                        applied = true;
                     }
                 }
             }
-            7 => probe.color = probe.color.next(),
-            8 => probe.show_on_chart = !probe.show_on_chart,
-            _ => changed = false,
         }
+        if applied {
+            app.settings_ui.dirty = true;
+        }
+        return;
+    }
+
+    let Some(probe) = app.settings.probes.get_mut(row) else {
+        return;
+    };
+    let mut changed = true;
+    match column {
+        3..=6 => {
+            let adjust = |value: &mut Option<f32>| {
+                let current = value.map_or(0.0, |c| f64::from(unit.from_c(c)));
+                let next = current + delta;
+                *value = Some(unit.to_c(next as f32));
+            };
+            match column {
+                3 => adjust(&mut probe.target_c),
+                4 => adjust(&mut probe.alert_low_c),
+                5 => adjust(&mut probe.alert_high_c),
+                _ => {
+                    let mut pre = probe.pre_alert_c;
+                    adjust(&mut pre);
+                    probe.pre_alert_c = pre;
+                }
+            }
+        }
+        7 => probe.color = probe.color.next(),
+        8 => probe.show_on_chart = !probe.show_on_chart,
+        _ => changed = false,
     }
     if changed {
         app.settings_ui.dirty = true;
@@ -1054,7 +1244,7 @@ fn handle_toggle(app: &mut App) {
 fn activate(app: &mut App) {
     if app.settings_ui.section == 0 {
         match app.settings_ui.probe_col {
-            1 => begin_edit(app, true),
+            0 | LABEL_COLUMN => begin_edit(app),
             2 => open_preset(app),
             7 => {
                 if let Some(probe) = app.settings.probes.get_mut(app.settings_ui.probe_row) {
@@ -1072,7 +1262,7 @@ fn activate(app: &mut App) {
         return;
     };
     match field.kind {
-        Kind::Text | Kind::Time | Kind::Voice | Kind::AudioDevice => begin_edit(app, false),
+        Kind::Text | Kind::Time | Kind::Voice | Kind::AudioDevice => begin_edit(app),
         Kind::Toggle => handle_toggle(app),
         Kind::Button(action) => run_action(app, action),
         _ => {}
@@ -1092,14 +1282,13 @@ fn run_action(app: &mut App, action: Action) {
     }
 }
 
-fn begin_edit(app: &mut App, label_edit: bool) {
+fn begin_edit(app: &mut App) {
     let buffer = if app.settings_ui.section == 0 {
         let index = app.settings_ui.probe_row;
         app.settings
             .probes
             .get(index)
-            .map(|probe| probe.label.clone())
-            .unwrap_or_default()
+            .map_or_else(String::new, |probe| probe.label.clone())
     } else {
         let list = fields(app.settings_ui.section);
         list.get(app.settings_ui.field)
@@ -1108,7 +1297,6 @@ fn begin_edit(app: &mut App, label_edit: bool) {
                 _ => String::new(),
             })
     };
-    let _ = label_edit;
     app.settings_ui.editing = true;
     app.settings_ui.edit_buffer = buffer;
 }
@@ -1120,11 +1308,20 @@ fn handle_edit(app: &mut App, key: KeyEvent) {
             app.settings_ui.edit_buffer.clear();
         }
         KeyCode::Enter => commit_edit(app),
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.settings_ui.edit_buffer.clear();
+        }
         KeyCode::Backspace => {
             app.settings_ui.edit_buffer.pop();
         }
         KeyCode::Char(character) => {
-            let limit = if app.settings_ui.section == 0 { 18 } else { 64 };
+            let limit = if app.settings_ui.preset_popup {
+                40
+            } else if app.settings_ui.section == 0 {
+                18
+            } else {
+                64
+            };
             if app.settings_ui.edit_buffer.chars().count() < limit {
                 app.settings_ui.edit_buffer.push(character);
             }
@@ -1136,8 +1333,12 @@ fn handle_edit(app: &mut App, key: KeyEvent) {
 fn commit_edit(app: &mut App) {
     let text = app.settings_ui.edit_buffer.clone();
     app.settings_ui.editing = false;
+    if app.settings_ui.preset_popup {
+        rename_preset(app, text);
+        return;
+    }
     if app.settings_ui.section == 0 {
-        if app.settings_ui.probe_col == 1
+        if matches!(app.settings_ui.probe_col, 0 | LABEL_COLUMN)
             && let Some(probe) = app.settings.probes.get_mut(app.settings_ui.probe_row)
         {
             probe.label = text;
@@ -1160,40 +1361,243 @@ fn commit_edit(app: &mut App) {
 
 fn open_preset(app: &mut App) {
     app.settings_ui.preset_popup = true;
-    let current = app
+    app.settings_ui.preset_edit = false;
+    let current = app.settings.probe(app.settings_ui.probe_row).preset;
+    app.settings_ui.preset_index = app
         .settings
-        .probes
-        .get(app.settings_ui.probe_row)
-        .map(|probe| probe.preset);
-    app.settings_ui.preset_index = current
-        .and_then(|preset| {
-            Preset::ALL
-                .iter()
-                .position(|candidate| *candidate == preset)
-        })
+        .presets
+        .iter()
+        .position(|preset| preset.id == current)
         .unwrap_or(0);
 }
 
+/// A key press while the preset popup is open.
 fn handle_preset(app: &mut App, key: KeyEvent) {
+    if app.settings_ui.editing {
+        handle_edit(app, key);
+    } else if app.settings_ui.preset_edit {
+        handle_preset_editor(app, key);
+    } else {
+        handle_preset_list(app, key);
+    }
+}
+
+fn handle_preset_list(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => app.settings_ui.preset_popup = false,
         KeyCode::Up => {
             app.settings_ui.preset_index = app.settings_ui.preset_index.saturating_sub(1);
         }
         KeyCode::Down => {
-            app.settings_ui.preset_index =
-                (app.settings_ui.preset_index + 1).min(Preset::ALL.len() - 1);
+            let last = app.settings.presets.len().saturating_sub(1);
+            app.settings_ui.preset_index = (app.settings_ui.preset_index + 1).min(last);
         }
-        KeyCode::Enter => {
-            let preset = Preset::ALL[app.settings_ui.preset_index];
-            if let Some(probe) = app.settings.probes.get_mut(app.settings_ui.probe_row) {
-                preset.apply(probe);
-                app.settings_ui.dirty = true;
-            }
-            app.settings_ui.preset_popup = false;
+        KeyCode::Enter => apply_preset(app),
+        KeyCode::Char('e') => {
+            app.settings_ui.preset_edit = true;
+            app.settings_ui.preset_row = 0;
         }
+        KeyCode::Char('n') => new_preset(app),
+        KeyCode::Char('d') => delete_preset(app),
+        KeyCode::Char(' ') => toggle_preset_pit(app),
         _ => {}
     }
+}
+
+/// Apply the highlighted preset to the probe the popup was opened from.
+fn apply_preset(app: &mut App) {
+    let row = app.settings_ui.probe_row;
+    let index = app.settings_ui.preset_index;
+    let applied = {
+        let Settings {
+            probes, presets, ..
+        } = &mut app.settings;
+        match (probes.get_mut(row), presets.get(index)) {
+            (Some(probe), Some(preset)) => {
+                preset.apply(probe);
+                true
+            }
+            _ => false,
+        }
+    };
+    if applied {
+        app.settings_ui.dirty = true;
+    }
+    app.settings_ui.preset_popup = false;
+}
+
+fn handle_preset_editor(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => app.settings_ui.preset_edit = false,
+        KeyCode::Up => app.settings_ui.preset_row = app.settings_ui.preset_row.saturating_sub(1),
+        KeyCode::Down => {
+            app.settings_ui.preset_row = (app.settings_ui.preset_row + 1).min(PRESET_ROWS - 1);
+        }
+        KeyCode::Left => adjust_preset(app, -1, key.modifiers),
+        KeyCode::Right => adjust_preset(app, 1, key.modifiers),
+        KeyCode::Char('+') | KeyCode::Char('=') => adjust_preset(app, 1, KeyModifiers::SHIFT),
+        KeyCode::Char('-') | KeyCode::Char('_') => adjust_preset(app, -1, KeyModifiers::SHIFT),
+        KeyCode::Char(' ') if app.settings_ui.preset_row == 2 => toggle_preset_pit(app),
+        KeyCode::Enter if app.settings_ui.preset_row == 0 => begin_preset_name(app),
+        _ => {}
+    }
+}
+
+fn begin_preset_name(app: &mut App) {
+    let index = app.settings_ui.preset_index;
+    let Some(preset) = app.settings.presets.get(index) else {
+        return;
+    };
+    app.settings_ui.edit_buffer = preset.name.clone();
+    app.settings_ui.editing = true;
+}
+
+fn adjust_preset(app: &mut App, direction: i32, modifiers: KeyModifiers) {
+    let step = if modifiers.contains(KeyModifiers::SHIFT) {
+        5.0
+    } else {
+        1.0
+    };
+    let delta = f64::from(direction) * step;
+    let row = app.settings_ui.preset_row;
+    let index = app.settings_ui.preset_index;
+    let Some(preset) = app.settings.presets.get_mut(index) else {
+        return;
+    };
+    match row {
+        1 => preset.target_f = Some(step_temperature(preset.target_f, delta, 80.0, 300.0, 200.0)),
+        3 => preset.range_f = Some(step_range(preset.range_f, delta, 0)),
+        4 => preset.range_f = Some(step_range(preset.range_f, delta, 1)),
+        5 => {
+            preset.alert_low_f = Some(step_temperature(
+                preset.alert_low_f,
+                delta,
+                80.0,
+                400.0,
+                200.0,
+            ));
+        }
+        6 => {
+            preset.alert_high_f = Some(step_temperature(
+                preset.alert_high_f,
+                delta,
+                80.0,
+                500.0,
+                275.0,
+            ));
+        }
+        _ => return,
+    }
+    app.settings_ui.dirty = true;
+}
+
+/// Move a °F setting by `delta`, starting from `start` when it is unset.
+fn step_temperature(value: Option<f32>, delta: f64, min: f32, max: f32, start: f32) -> f32 {
+    (f64::from(value.unwrap_or(start)) + delta).clamp(f64::from(min), f64::from(max)) as f32
+}
+
+/// Move one end of the pit range, keeping the low end below the high end.
+fn step_range(range: Option<[f32; 2]>, delta: f64, end: usize) -> [f32; 2] {
+    let mut value = range.unwrap_or([225.0, 275.0]);
+    let current = f64::from(value[end]);
+    let (min, max) = if end == 0 {
+        (80.0, f64::from(value[1]))
+    } else {
+        (f64::from(value[0]), 500.0)
+    };
+    value[end] = (current + delta).clamp(min, max) as f32;
+    value
+}
+
+fn toggle_preset_pit(app: &mut App) {
+    let index = app.settings_ui.preset_index;
+    if let Some(preset) = app.settings.presets.get_mut(index) {
+        preset.pit = !preset.pit;
+        app.settings_ui.dirty = true;
+    }
+}
+
+fn new_preset(app: &mut App) {
+    let index = app.settings_ui.preset_index;
+    let target_f = app
+        .settings
+        .presets
+        .get(index)
+        .and_then(|preset| preset.target_f);
+    let id = app.settings.unique_preset_id("new_preset", None);
+    let insert_at = if app.settings.presets.is_empty() {
+        0
+    } else {
+        index + 1
+    };
+    app.settings.presets.insert(
+        insert_at,
+        Preset {
+            id,
+            name: String::from("New preset"),
+            target_f,
+            ..Preset::default()
+        },
+    );
+    app.settings_ui.preset_index = insert_at;
+    app.settings_ui.preset_edit = true;
+    app.settings_ui.preset_row = 0;
+    app.settings_ui.edit_buffer.clear();
+    app.settings_ui.editing = true;
+    app.settings_ui.dirty = true;
+}
+
+fn delete_preset(app: &mut App) {
+    let index = app.settings_ui.preset_index;
+    if app.settings.presets.len() <= 1 {
+        return;
+    }
+    let removed = app.settings.presets.remove(index);
+    let fallback = index.min(app.settings.presets.len() - 1);
+    let replacement = app
+        .settings
+        .presets
+        .get(fallback)
+        .map(|preset| preset.id.clone());
+    if let Some(replacement) = replacement {
+        for probe in &mut app.settings.probes {
+            if probe.preset == removed.id {
+                probe.preset.clone_from(&replacement);
+            }
+        }
+    }
+    app.settings_ui.preset_index = fallback;
+    app.settings_ui.preset_edit = false;
+    app.settings_ui.dirty = true;
+}
+
+/// Rename the highlighted preset, keeping its id and the probe references in step.
+fn rename_preset(app: &mut App, text: String) {
+    let name = text.trim().to_string();
+    if name.is_empty() {
+        return;
+    }
+    let index = app.settings_ui.preset_index;
+    let Some(preset) = app.settings.presets.get(index) else {
+        return;
+    };
+    let old_id = preset.id.clone();
+    let new_id = app
+        .settings
+        .unique_preset_id(&Preset::slugify(&name), Some(index));
+    let Some(preset) = app.settings.presets.get_mut(index) else {
+        return;
+    };
+    preset.name = name;
+    if new_id != old_id {
+        preset.id.clone_from(&new_id);
+        for probe in &mut app.settings.probes {
+            if probe.preset == old_id {
+                probe.preset.clone_from(&new_id);
+            }
+        }
+    }
+    app.settings_ui.dirty = true;
 }
 
 fn clear_alert_column(app: &mut App) {
