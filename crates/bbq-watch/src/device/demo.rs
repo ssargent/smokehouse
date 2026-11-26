@@ -7,30 +7,7 @@ use tokio::sync::mpsc;
 use crate::clock::{AppClock, Clock};
 use crate::device::{DeviceCommand, DeviceConfig, DeviceEvent};
 use crate::model::{PROBE_COUNT, fahrenheit_to_celsius};
-
-/// Deterministic pseudo-random source (xorshift64), so no `rand` dependency.
-struct Rng(u64);
-
-impl Rng {
-    fn new(seed: u64) -> Self {
-        Self(seed | 1)
-    }
-
-    fn next_u32(&mut self) -> u32 {
-        let mut x = self.0;
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        self.0 = x;
-        (x >> 32) as u32
-    }
-
-    /// Uniform value in `[-amplitude, amplitude]`.
-    fn uniform(&mut self, amplitude: f32) -> f32 {
-        let unit = self.next_u32() as f32 / u32::MAX as f32;
-        (unit * 2.0 - 1.0) * amplitude
-    }
-}
+use crate::rng::Rng;
 
 /// Round a Fahrenheit value to Celsius tenths, as the hardware reports it.
 fn tenths_c(fahrenheit: f32) -> f32 {

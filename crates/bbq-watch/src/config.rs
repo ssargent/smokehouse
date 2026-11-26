@@ -897,24 +897,9 @@ pub fn save(settings: &Settings, path: &Path) -> Result<(), ConfigError> {
 
 fn create_default(path: &Path) -> Result<Settings, ConfigError> {
     let mut settings = Settings::default();
-    settings.alarms.ntfy_topic = format!("bbq-watch-{}", random_hex4());
+    settings.alarms.ntfy_topic = format!("bbq-watch-{}", crate::rng::random_hex4());
     save(&settings, path)?;
     Ok(settings)
-}
-
-/// Four random-ish hex digits for a first-run ntfy topic.
-fn random_hex4() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| u64::from(d.subsec_nanos()))
-        .unwrap_or(0);
-    let mut x = nanos ^ (u64::from(std::process::id()) << 32) ^ 0x9E37_79B9_7F4A_7C15;
-    x ^= x << 13;
-    x ^= x >> 7;
-    x ^= x << 17;
-    format!("{:04x}", (x & 0xFFFF) as u16)
 }
 
 /// Parse a `HH:MM` string into `(hour, minute)`.

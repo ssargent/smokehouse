@@ -16,4 +16,5 @@ pub mod device;
 pub mod logger;
 pub mod model;
 pub mod notify;
+pub mod rng;
 pub mod ui;
